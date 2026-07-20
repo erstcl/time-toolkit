@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "time-toolkit"
+version = "0.1.0"
+description = "Universal integration toolkit for Time Messenger"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "erstcl" }]
+license = { file = "LICENSE" }
+keywords = ["time-messenger", "mattermost", "cli", "mcp", "websocket"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Communications :: Chat",
+]
+dependencies = [
+  "httpx>=0.27,<1",
+  "keyring>=25,<27",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1,<2"]
+realtime = ["websockets>=13,<17"]
+service = ["fastapi>=0.115,<1", "uvicorn>=0.32,<1"]
+dev = [
+  "httpx2>=2,<3",
+  "pytest>=8,<10",
+  "pytest-cov>=5,<8",
+  "ruff>=0.8,<1",
+]
+
+[project.scripts]
+timetk = "time_toolkit.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/erstcl/time-toolkit"
+Documentation = "https://github.com/erstcl/time-toolkit/tree/main/docs"
+Issues = "https://github.com/erstcl/time-toolkit/issues"
+Source = "https://github.com/erstcl/time-toolkit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/time_toolkit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
