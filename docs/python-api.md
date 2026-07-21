@@ -15,7 +15,7 @@ uv add --editable ../time-toolkit
 Для воспроизводимой сборки из GitHub закрепите release tag:
 
 ```bash
-uv add 'time-toolkit @ git+https://github.com/erstcl/time-toolkit.git@v0.2.0'
+uv add 'time-toolkit @ git+https://github.com/erstcl/time-toolkit.git@v0.3.0'
 ```
 
 Не встраивайте GitHub token в URL зависимости. Для закрытого deployment можно
@@ -24,7 +24,7 @@ uv add 'time-toolkit @ git+https://github.com/erstcl/time-toolkit.git@v0.2.0'
 Нужные extras:
 
 ```bash
-uv add 'time-toolkit[mcp,realtime,service] @ git+https://github.com/erstcl/time-toolkit.git@v0.2.0'
+uv add 'time-toolkit[mcp,realtime,service] @ git+https://github.com/erstcl/time-toolkit.git@v0.3.0'
 ```
 
 Основной Python API требует только базовые зависимости. Extras нужны, только если

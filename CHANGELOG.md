@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+Пока нет изменений.
+
+## [0.3.0] — 2026-07-21
+
 ### Добавлено
 
 - callback `on_connected` и модель `RealtimeConnection`, позволяющие выполнить
@@ -14,6 +18,13 @@
 - непустое поле `meta` в NDJSON-envelope для типизации служебных строк потока;
 - read-only модель `SidebarCategory`, Python API для sidebar categories и CLI-команды
   `categories`, `category-channels`.
+
+### Изменено
+
+- основной README переведён на английский, полная русская версия вынесена в
+  `README.ru.md`;
+- package metadata дополнена classifiers и ссылками на документацию, issues и
+  исходный код.
 
 ### Исправлено
 
@@ -67,6 +78,7 @@
 - чтение не меняет read state;
 - HTTP API не содержит маршрутов записи.
 
-[Unreleased]: https://github.com/erstcl/time-toolkit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/erstcl/time-toolkit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/erstcl/time-toolkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/erstcl/time-toolkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/erstcl/time-toolkit/releases/tag/v0.1.0
