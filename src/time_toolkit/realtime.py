@@ -129,7 +129,7 @@ def normalize_event(payload: str | bytes) -> dict[str, Any]:
                 decoded = json.loads(nested)
             except json.JSONDecodeError:
                 continue
-            if isinstance(decoded, (dict, list)):
+            if isinstance(decoded, dict | list):
                 data[key] = decoded
     return value
 

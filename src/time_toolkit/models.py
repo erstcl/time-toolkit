@@ -160,6 +160,6 @@ def primitive(value: Any) -> Any:
         return {key: primitive(item) for key, item in asdict(value).items()}
     if isinstance(value, dict):
         return {str(key): primitive(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, list | tuple | set):
         return [primitive(item) for item in value]
     return value
