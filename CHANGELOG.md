@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+Пока нет изменений.
+
+## [0.2.0] — 2026-07-21
+
 ### Добавлено
 
 - публичные `RealtimeService` и `RealtimeEvent` для профильного Python-consumer;
@@ -48,5 +52,6 @@
 - чтение не меняет read state;
 - HTTP API не содержит маршрутов записи.
 
-[Unreleased]: https://github.com/erstcl/time-toolkit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/erstcl/time-toolkit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/erstcl/time-toolkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/erstcl/time-toolkit/releases/tag/v0.1.0
