@@ -122,7 +122,7 @@ class Profile:
         if raw_policy is None:
             raw_policy = "fullauto" if value.get("automated_writes_enabled") is True else "approval"
         raw_hosts = value.get("allowed_websocket_hosts", ())
-        if not isinstance(raw_hosts, (list, tuple)):
+        if not isinstance(raw_hosts, list | tuple):
             raise ConfigError("allowed_websocket_hosts must be a list")
         return cls(
             name=name,

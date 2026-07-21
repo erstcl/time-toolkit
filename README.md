@@ -1,124 +1,146 @@
+[Русская версия](README.ru.md) | English
+
 # Time Toolkit
 
-Time Toolkit — независимый клиент и набор адаптеров для Time Messenger и
-Mattermost-compatible серверов. Один Python-пакет предоставляет команду `timetk`,
-MCP-сервер `time-toolkit`, Python API, поток событий WebSocket и локальный
-read-only HTTP API.
+[![CI](https://github.com/erstcl/time-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/erstcl/time-toolkit/actions/workflows/ci.yml)
+[![Python 3.11–3.14](https://img.shields.io/badge/python-3.11%E2%80%933.14-3776AB)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-173B72)](LICENSE)
 
-Проект не требует серверного плагина. Он работает с правами выбранного пользователя
-или бота через публичный REST API v4 и не меняет состояние прочтения во время
-обычных операций чтения.
+An independent client and integration toolkit for Time Messenger and
+Mattermost-compatible servers. One Python package provides the `timetk` CLI, a
+`time-toolkit` MCP server, an importable Python API, a WebSocket event stream, and a
+local read-only HTTP API.
 
-## Возможности
+Time Toolkit needs no server plugin. It uses the permissions of a selected user or
+bot through the public REST API v4 and does not change read state during ordinary
+read operations.
 
-- просмотр команд, каналов, личных диалогов, сообщений, тредов, непрочитанного,
-  упоминаний, закреплений и флагов;
-- поиск сообщений и пользователей, реакции, read receipts и метаданные файлов;
-- отправка, ответы, редактирование, удаление, реакции, pin, flag, follow и явное
-  изменение read state;
-- загрузка и потоковое скачивание файлов;
-- события Mattermost WebSocket с фильтрами, переподключением и удалением дублей;
-- `text`, `json` и `ndjson` для людей, shell-скриптов и долгоживущих сервисов;
-- MCP для Codex и других MCP-клиентов;
-- импортируемый Python API и защищённый read-only HTTP API;
-- любое количество изолированных профилей с отдельными серверами, токенами и
-  политиками записи.
+## Capabilities
 
-## Политика записи
+- inspect teams, channels, direct messages, posts, threads, unread messages,
+  mentions, pins, flags, read receipts, reactions, users, and file metadata;
+- search messages and users with machine-readable `text`, `json`, and `ndjson`
+  output;
+- create, reply to, edit, and delete posts with an explicit write policy;
+- manage reactions, pins, flags, followed threads, files, and read state;
+- stream Mattermost WebSocket events with filtering, reconnection, and
+  deduplication;
+- expose tools to Codex and other clients through MCP;
+- embed the same service layer in Python applications;
+- serve a protected local read-only HTTP API;
+- isolate any number of profiles with separate servers, tokens, and write modes.
 
-Каждый профиль имеет один из трёх режимов:
+## Safety model
 
-| Режим | Интерактивный CLI и подтверждённый MCP | Автоматизация и `--yes` |
+Every profile has one of three write modes:
+
+| Mode | Interactive CLI and confirmed MCP | Automation and `--yes` |
 |---|---:|---:|
-| `readonly` | запрещено | запрещено |
-| `approval` | разрешено после подтверждения | запрещено |
-| `fullauto` | разрешено | разрешено |
+| `readonly` | blocked | blocked |
+| `approval` | allowed after confirmation | blocked |
+| `fullauto` | allowed | allowed |
 
-Новый профиль получает `approval`. MCP всегда использует двухшаговую запись с
-одноразовым подтверждением, даже если профиль настроен как `fullauto`.
+New profiles default to `approval`. MCP always uses a two-step write flow with a
+single-use confirmation token, including for `fullauto` profiles. Tokens are stored
+in the operating-system keyring rather than Git or `config.json`.
 
-## Быстрый старт
+## Quick start
 
-Нужны Python 3.11+ и [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Time Toolkit requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/erstcl/time-toolkit.git
 cd time-toolkit
 uv sync --locked --no-editable --all-extras
 
-# Универсальный пример
+# Generic Mattermost-compatible server
 uv run --no-sync timetk profile add example https://time.example.com
 
-# Подробно поддерживаемый пример для Central University
+# Explicitly supported Time Messenger deployment
 uv run --no-sync timetk profile add university https://time.cu.ru
 ```
 
-Сохраните токен через скрытый ввод. Значение попадёт в системное хранилище секретов,
-а не в Git или `config.json`:
+Store and verify a personal access token through hidden input:
 
 ```bash
 uv run --no-sync timetk -p university auth set
 uv run --no-sync timetk -p university auth status --check
 ```
 
-Первые команды чтения:
+Start with read-only commands:
 
 ```bash
 uv run --no-sync timetk -p university channels --pattern general
 uv run --no-sync timetk -p university unread --with-posts
-uv run --no-sync timetk -p university search "экзамен" --since 7d
+uv run --no-sync timetk -p university search "exam" --since 7d
 ```
 
-Безопасный предпросмотр и интерактивная отправка:
+Preview and confirm a write operation:
 
 ```bash
-uv run --no-sync timetk -p university post general -m "Привет" --dry-run
-uv run --no-sync timetk -p university post general -m "Привет"
+uv run --no-sync timetk -p university post general -m "Hello" --dry-run
+uv run --no-sync timetk -p university post general -m "Hello"
 ```
 
-`--dry-run` не обращается к endpoint записи. Команда без `--yes` показывает точный
-план и спрашивает `Proceed? [y/N]`. Для автоматизации оператор должен отдельно
-назначить профилю `fullauto`.
+`--dry-run` never calls a write endpoint. Without `--yes`, the CLI shows the exact
+plan and asks `Proceed? [y/N]`. Automated writers require a separately configured
+`fullauto` profile.
 
-## Какой интерфейс выбрать
+## Interfaces
 
-| Задача | Интерфейс |
+| Use case | Interface |
 |---|---|
-| Работа человека в терминале | CLI `timetk` |
-| Codex или другой агент | MCP `time-toolkit` |
-| Python-приложение в одном процессе | `TimeService` |
-| Сервис на любом языке на той же машине | read-only HTTP API |
-| Реакция на новые события | `timetk -o ndjson watch` |
-| Короткий скрипт на любом языке | CLI с `-o json` или `-o ndjson` |
+| Human operator in a terminal | `timetk` CLI |
+| Codex or another agent | `time-toolkit` MCP server |
+| In-process Python application | `TimeService` |
+| Local service written in another language | read-only HTTP API |
+| Reaction to new events | `timetk -o ndjson watch` |
+| Short language-agnostic script | CLI with `-o json` or `-o ndjson` |
 
-Для автоматической отправки из внешнего сервиса используйте отдельный профиль,
-bot token, `fullauto` и собственный allowlist адресатов. HTTP API проекта намеренно
-остаётся read-only.
+Automated sending from an external service should use a dedicated bot token, a
+`fullauto` profile, and an application-level recipient allowlist. The built-in HTTP
+API intentionally remains read-only.
 
-## Документация
+## Architecture
 
-- [Установка, профили и получение токена](docs/getting-started.md)
-- [Полный справочник CLI](docs/cli.md)
-- [MCP для Codex и других клиентов](docs/mcp.md)
-- [Интеграция с другими проектами](docs/integrations.md)
+```text
+CLI / MCP / Python API / HTTP API / WebSocket watcher
+                         │
+                    TimeService
+                         │
+             authenticated REST API v4 client
+                         │
+       Time Messenger / Mattermost-compatible server
+```
+
+All interfaces share the same configuration, authentication, service, and safety
+layers. Network code stays behind a typed client, while CLI and MCP adapters handle
+presentation and confirmation semantics.
+
+## Documentation
+
+- [Getting started, profiles, and tokens](docs/getting-started.md)
+- [Complete CLI reference](docs/cli.md)
+- [MCP integration](docs/mcp.md)
+- [Integration patterns](docs/integrations.md)
 - [Python API](docs/python-api.md)
 - [HTTP API](docs/http-api.md)
-- [Модель безопасности](docs/security.md)
-- [Архитектура и гарантии](docs/architecture.md)
-- [Решение проблем](docs/troubleshooting.md)
-- [Разработка и выпуск версий](docs/development.md)
-- [История изменений](CHANGELOG.md)
+- [Security model](docs/security.md)
+- [Architecture and guarantees](docs/architecture.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Development and releases](docs/development.md)
+- [Changelog](CHANGELOG.md)
 
-## Границы проекта
+## Scope
 
-Time Toolkit не входит в состав и не одобрен разработчиками Time Messenger,
-Mattermost, Inc., Central University или операторами совместимых серверов. Названия
-и товарные знаки принадлежат их владельцам.
+Time Toolkit is not part of, or endorsed by, Time Messenger, Mattermost, Inc.,
+Central University, or operators of compatible servers. Product names and
+trademarks belong to their respective owners.
 
-В проекте нет входа по паролю, автоматического чтения профиля браузера, постоянного
-зеркала сообщений, автоматического `mark-read`, HTTP-записи, полноэкранного TUI и
-административных операций Mattermost. Причины описаны в
-[архитектуре](docs/architecture.md#сознательные-ограничения).
+The project intentionally excludes password login, browser-profile scraping,
+persistent message mirroring, automatic `mark-read`, HTTP write endpoints, a
+full-screen TUI, and Mattermost administration. The rationale is documented in the
+[architecture guide](docs/architecture.md#сознательные-ограничения).
 
-Исходный код Time Toolkit написан независимо и взаимодействует с серверами только
-через документированные сетевые интерфейсы. Лицензия проекта — [MIT](LICENSE).
+Time Toolkit is independently implemented against documented network interfaces and
+released under the [MIT License](LICENSE).
