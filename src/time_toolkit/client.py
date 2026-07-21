@@ -248,6 +248,13 @@ class TimeClient:
         clean = quote(name, safe="")
         return self.request("GET", f"/api/v4/teams/{team_id}/channels/name/{clean}")
 
+    def get_sidebar_categories(self, user_id: str, team_id: str) -> dict[str, Any]:
+        value = self.request(
+            "GET",
+            f"/api/v4/users/{user_id}/teams/{team_id}/channels/categories",
+        )
+        return value if isinstance(value, dict) else {"categories": [], "order": []}
+
     def get_channels_by_ids(self, channel_ids: list[str]) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
         unique = list(dict.fromkeys(channel_id for channel_id in channel_ids if channel_id))

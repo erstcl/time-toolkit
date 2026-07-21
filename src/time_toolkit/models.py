@@ -75,6 +75,38 @@ class Channel:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SidebarCategory:
+    id: str
+    user_id: str
+    team_id: str
+    type: str
+    display_name: str
+    sorting: str
+    muted: bool
+    collapsed: bool
+    channel_ids: tuple[str, ...]
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> SidebarCategory:
+        channel_ids = raw.get("channel_ids")
+        return cls(
+            id=str(raw.get("id", "")),
+            user_id=str(raw.get("user_id", "")),
+            team_id=str(raw.get("team_id", "")),
+            type=str(raw.get("type", "")),
+            display_name=str(raw.get("display_name", "")),
+            sorting=str(raw.get("sorting", "")),
+            muted=_truthy(raw.get("muted")),
+            collapsed=_truthy(raw.get("collapsed")),
+            channel_ids=(
+                tuple(str(channel_id) for channel_id in channel_ids)
+                if isinstance(channel_ids, list)
+                else ()
+            ),
+        )
+
+
 def _contains_mention(message: str, username: str) -> bool:
     if not username:
         return False

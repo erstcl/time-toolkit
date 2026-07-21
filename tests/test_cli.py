@@ -9,9 +9,10 @@ import pytest
 from time_toolkit.cli import _require_profile, _write_mode, build_parser, cmd_watch
 from time_toolkit.config import Profile
 from time_toolkit.errors import UsageError
-from time_toolkit.models import RealtimeConnection, RealtimeEvent
+from time_toolkit.models import Channel, RealtimeConnection, RealtimeEvent, SidebarCategory
 from time_toolkit.output import emit
 from time_toolkit.realtime import RealtimeService
+from time_toolkit.service import TimeService
 
 
 def test_parser_uses_time_toolkit_command_name():
@@ -63,6 +64,67 @@ def test_profile_parser_collects_explicit_websocket_hosts():
         ]
     )
     assert args.websocket_hosts == ["socket.example.test", "events.example.test:8443"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_id"),
+    [
+        (["categories"], "category-id"),
+        (["category-channels", "Study"], "channel-id"),
+    ],
+)
+def test_sidebar_category_commands_use_public_service(monkeypatch, command, expected_id):
+    selected: dict[str, object] = {}
+    stream = io.StringIO()
+
+    class FakeTimeService:
+        profile = Profile("selected", "https://time.example.test")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        @staticmethod
+        def sidebar_categories():
+            return [
+                SidebarCategory(
+                    id="category-id",
+                    user_id="user-id",
+                    team_id="team-id",
+                    type="custom",
+                    display_name="Study",
+                    sorting="manual",
+                    muted=False,
+                    collapsed=False,
+                    channel_ids=("channel-id",),
+                )
+            ]
+
+        @staticmethod
+        def category_channels(value):
+            selected["category"] = value
+            return [Channel("channel-id", "study", "Study", "O")]
+
+    def open_service(cls, profile_name, **_kwargs):
+        del cls
+        selected["profile"] = profile_name
+        return FakeTimeService()
+
+    monkeypatch.setattr(TimeService, "open", classmethod(open_service))
+    monkeypatch.setattr(
+        "time_toolkit.cli.emit", lambda data, **kwargs: emit(data, stream=stream, **kwargs)
+    )
+    args = build_parser().parse_args(["--profile", "selected", "--format", "json", *command])
+    assert args.func(args) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["profile"] == "selected"
+    assert payload["server"] == "https://time.example.test"
+    assert payload["data"][0]["id"] == expected_id
+    assert selected["profile"] == "selected"
+    if command[0] == "category-channels":
+        assert selected["category"] == "Study"
 
 
 @pytest.mark.parametrize("lifecycle", [False, True])

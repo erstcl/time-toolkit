@@ -11,7 +11,9 @@
   REST catch-up до обработки событий нового WebSocket-соединения;
 - флаг `timetk watch --lifecycle` для NDJSON-сигнала о первичном подключении и
   reconnect;
-- непустое поле `meta` в NDJSON-envelope для типизации служебных строк потока.
+- непустое поле `meta` в NDJSON-envelope для типизации служебных строк потока;
+- read-only модель `SidebarCategory`, Python API для sidebar categories и CLI-команды
+  `categories`, `category-channels`.
 
 ### Исправлено
 

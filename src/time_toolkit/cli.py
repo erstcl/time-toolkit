@@ -260,6 +260,14 @@ def cmd_channels(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_categories(args: argparse.Namespace) -> int:
+    return _with_service(args, lambda service: service.sidebar_categories())
+
+
+def cmd_category_channels(args: argparse.Namespace) -> int:
+    return _with_service(args, lambda service: service.category_channels(args.category))
+
+
 def cmd_dms(args: argparse.Namespace) -> int:
     return _with_service(
         args, lambda service: service.list_dms(with_user=args.with_user, limit=args.limit)
@@ -826,6 +834,16 @@ def build_parser() -> argparse.ArgumentParser:
     channels.add_argument("--limit", type=int, default=100)
     channels.add_argument("--max-pages", type=int, default=10)
     channels.set_defaults(func=cmd_channels)
+
+    commands.add_parser("categories", help="list sidebar categories").set_defaults(
+        func=cmd_categories
+    )
+
+    category_channels = commands.add_parser(
+        "category-channels", help="list channels in a sidebar category"
+    )
+    category_channels.add_argument("category", help="exact category ID or display name")
+    category_channels.set_defaults(func=cmd_category_channels)
 
     dms = commands.add_parser("dms", help="list direct and group messages")
     dms.add_argument("--with", dest="with_user", default="")

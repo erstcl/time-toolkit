@@ -74,6 +74,9 @@ get_user(username) -> User
 list_channels(*, pattern="", channel_type="", limit=100, max_pages=10) -> list[Channel]
 list_dms(*, with_user="", limit=100) -> list[Channel]
 resolve_channel(value) -> Channel
+sidebar_categories() -> list[SidebarCategory]
+resolve_sidebar_category(value) -> SidebarCategory
+category_channels(value) -> list[Channel]
 
 channel_posts(channel, *, since_ms=None, until_ms=None, authors=None,
               contains="", limit=100) -> list[Post]
@@ -98,6 +101,14 @@ download_file(file_id, destination, *, overwrite=False) -> Path
 
 Чтение не меняет read state. `download_file` меняет только локальную файловую
 систему, пишет через временный файл и не изменяет Time.
+
+`sidebar_categories()` использует текущего пользователя и явно выбранный team
+профиля. Порядок категорий берётся из серверного `order`.
+`resolve_sidebar_category()` принимает точный ID или точный `display_name`;
+неоднозначное имя даёт `ConflictError`, неизвестное — `NotFoundError`.
+`category_channels()` сохраняет порядок `channel_ids`: сначала сопоставляет их с
+`list_channels()`, затем запрашивает только отсутствующие ID по одному. Недоступный
+или удалённый канал пропускается; batch endpoint не используется.
 
 ## Realtime-события
 
@@ -232,6 +243,13 @@ upload_files(channel, files) -> list[str]
 
 `id`, `name`, `display_name`, `type`, `team_id`, `total_msg_count`, `label`.
 `label` для direct message содержит понятное имя собеседника, когда оно доступно.
+
+### `SidebarCategory`
+
+`id`, `user_id`, `team_id`, `type`, `display_name`, `sorting`, `muted`,
+`collapsed`, `channel_ids`. `channel_ids` — tuple в серверном порядке. Тип обычно
+равен `custom`, `favorites`, `channels` или `direct_messages`, но модель сохраняет
+и неизвестные будущие значения.
 
 ### `Post`
 

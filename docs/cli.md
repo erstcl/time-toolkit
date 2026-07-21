@@ -93,11 +93,18 @@ timetk -p university -o json unread --with-posts
 | `me` | — | текущий пользователь |
 | `teams` | — | доступные Mattermost-команды |
 | `channels` | `--pattern TEXT`, `--type O|P|D|G`, `--limit N`, `--max-pages N` | каналы аккаунта |
+| `categories` | — | sidebar categories выбранного team в серверном порядке |
+| `category-channels CATEGORY` | точный ID или отображаемое имя | доступные каналы папки в её порядке |
 | `dms` | `--with USER`, `--limit N` | личные и групповые диалоги |
 | `resolve` | `--user TEXT`, `--channel TEXT`, `--limit N` | точные объекты пользователя/канала |
 
 Типы каналов: `O` — public, `P` — private, `D` — direct message, `G` — group
 message. В `resolve` нужен хотя бы один из `--user` и `--channel`.
+
+`category-channels` сначала использует уже видимые каналы, затем по одному
+запрашивает отсутствующие ID. Удалённый или недоступный канал пропускается, не
+ломая остальной результат. Команды категорий выполняют только GET-запросы и не
+меняют read state.
 
 ### Сообщения и треды
 

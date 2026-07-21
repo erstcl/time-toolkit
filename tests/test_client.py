@@ -132,6 +132,26 @@ def test_path_values_are_percent_encoded():
     ]
 
 
+def test_sidebar_categories_use_read_only_user_team_endpoint():
+    recorded: dict[str, str] = {}
+    response = {
+        "categories": [{"id": "category-id", "type": "custom", "channel_ids": []}],
+        "order": ["category-id"],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recorded["method"] = request.method
+        recorded["path"] = request.url.path
+        return httpx.Response(200, json=response)
+
+    client = make_client(handler)
+    assert client.get_sidebar_categories("u" * 26, "t" * 26) == response
+    assert recorded == {
+        "method": "GET",
+        "path": f"/api/v4/users/{'u' * 26}/teams/{'t' * 26}/channels/categories",
+    }
+
+
 def test_unflag_sends_complete_preference():
     recorded: dict[str, object] = {}
 

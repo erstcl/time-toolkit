@@ -14,7 +14,7 @@ from time_toolkit.client import TimeClient
 from time_toolkit.config import ConfigStore, Profile
 from time_toolkit.dates import iso_utc
 from time_toolkit.errors import ConflictError, NotFoundError, PermissionError, UsageError
-from time_toolkit.models import Channel, Post, Team, Thread, User
+from time_toolkit.models import Channel, Post, SidebarCategory, Team, Thread, User
 
 _ID_RE = re.compile(r"^[a-z0-9]{26}$")
 _POST_URL_RE = re.compile(r"/(?:thread|pl|posts)/([a-z0-9]{20,})")
@@ -195,6 +195,75 @@ class TimeService:
                 if needle in f"{channel.label} {channel.display_name}".casefold()
             ]
         return output[:limit]
+
+    def sidebar_categories(self) -> list[SidebarCategory]:
+        payload = self.client.get_sidebar_categories(self.me().id, self.team_id())
+        raw_categories = payload.get("categories")
+        raw_order = payload.get("order")
+        categories = (
+            [SidebarCategory.from_api(raw) for raw in raw_categories if isinstance(raw, dict)]
+            if isinstance(raw_categories, list)
+            else []
+        )
+        by_id = {category.id: category for category in categories}
+        ordered: list[SidebarCategory] = []
+        seen: set[str] = set()
+        if isinstance(raw_order, list):
+            for category_id in raw_order:
+                key = str(category_id)
+                category = by_id.get(key)
+                if category is not None and key not in seen:
+                    ordered.append(category)
+                    seen.add(key)
+        for category in categories:
+            if category.id not in seen:
+                ordered.append(category)
+                seen.add(category.id)
+        return ordered
+
+    def resolve_sidebar_category(self, value: str) -> SidebarCategory:
+        target = value.strip()
+        categories = self.sidebar_categories()
+        for category in categories:
+            if category.id == target:
+                return category
+        matches = [category for category in categories if category.display_name == target]
+        if not matches:
+            raise NotFoundError(f"Sidebar category not found: {value}")
+        if len(matches) > 1:
+            raise ConflictError(
+                f"Sidebar category name is ambiguous: {value}",
+                details={
+                    "matches": [{"id": category.id, "type": category.type} for category in matches]
+                },
+            )
+        return matches[0]
+
+    def category_channels(self, value: str) -> list[Channel]:
+        category = self.resolve_sidebar_category(value)
+        if not category.channel_ids:
+            return []
+        visible = {
+            channel.id: channel
+            for channel in self.list_channels(
+                limit=max(100, len(category.channel_ids)),
+                max_pages=20,
+            )
+        }
+        output: list[Channel] = []
+        for channel_id in category.channel_ids:
+            channel = visible.get(channel_id)
+            if channel is None:
+                try:
+                    channel = Channel.from_api(self.client.get_channel(channel_id))
+                except (NotFoundError, PermissionError):
+                    continue
+                if not channel.id:
+                    continue
+                self._channels[channel.id] = channel
+                visible[channel_id] = channel
+            output.append(channel)
+        return output
 
     def resolve_channel(self, value: str) -> Channel:
         target = value.strip().lstrip("~")

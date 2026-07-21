@@ -36,6 +36,32 @@ Secret store ────────────> token / CSRF
 пагинацию, даты, ошибки и модели. HTTP намеренно предоставляет только часть
 операций чтения; WebSocket и запись через него недоступны.
 
+## Sidebar categories как конфигурация интеграции
+
+Если внешний проект группирует каналы так же, как пользователь в Time, читайте
+папки через публичный API, а не через `TimeClient.request()`:
+
+```python
+from time_toolkit.service import TimeService
+
+with TimeService.open("example") as time:
+    categories = time.sidebar_categories()
+    selected = time.resolve_sidebar_category("Study")
+    channels = time.category_channels(selected.id)
+```
+
+Для другого языка используйте CLI:
+
+```bash
+timetk -p example -o json categories
+timetk -p example -o json category-channels "Study"
+```
+
+ID категории предпочтительнее отображаемого имени для сохранённой конфигурации.
+Имя разрешается только по точному совпадению. Порядок категорий и каналов приходит
+от сервера; недоступные channel IDs пропускаются. Toolkit не изменяет sidebar и не
+использует batch lookup каналов.
+
 ## Контракт JSON CLI
 
 Для одиночного вызова запускайте команду с абсолютным путём и проверяйте три вещи:

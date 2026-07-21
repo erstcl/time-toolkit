@@ -42,6 +42,7 @@ Time Toolkit не требует server plugin и работает с права
 
 - system ping и client config;
 - текущий пользователь, users, teams и channels;
+- упорядоченные channel sidebar categories;
 - channel membership и unread counts;
 - posts, search, threads, flags, pins, reactions и readers;
 - create/update/delete post, follow, view/unread и upload;
@@ -121,6 +122,24 @@ cookie и в authentication challenge, поскольку разные Mattermos
 Ведущий `~` удаляется. Для direct message человекочитаемый `label` строится из
 username собеседника. Кэш пользователей и каналов живёт только внутри одного
 `TimeService`.
+
+## Sidebar categories
+
+`sidebar_categories` выполняет GET
+`/api/v4/users/{user_id}/teams/{team_id}/channels/categories`, используя текущего
+пользователя и team выбранного профиля. Ответ `categories` нормализуется в
+`SidebarCategory`, а массив `order` задаёт порядок результата. Категории, которых
+нет в `order`, добавляются после него в порядке серверного массива.
+
+`resolve_sidebar_category` принимает только точный ID или точный `display_name`.
+Несколько совпадений имени дают `ConflictError`, отсутствие — `NotFoundError`.
+
+`category_channels` сохраняет порядок `channel_ids`. Сначала он строит карту из
+`list_channels`, затем вызывает отдельный `GET /api/v4/channels/{id}` только для
+отсутствующих каналов. Ответы 403 и 404 для отдельного канала пропускаются; другие
+ошибки передаются вызывающему коду. Batch `POST /api/v4/channels/ids` намеренно не
+используется, поэтому чтение папок работает на форках без этого endpoint. Методов
+создания, переименования и изменения категорий в публичном API нет.
 
 ## Чтение и пагинация
 
