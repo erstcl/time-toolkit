@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import re
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any
@@ -79,6 +82,19 @@ def _contains_mention(message: str, username: str) -> bool:
     return any(re.search(rf"(?<![\w@])@{target}\b", message, re.IGNORECASE) for target in targets)
 
 
+def _truthy(value: Any) -> bool:
+    if value is True or value == 1:
+        return True
+    return isinstance(value, str) and value.strip().casefold() in {"1", "true"}
+
+
+def _integer(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass(frozen=True, slots=True)
 class Post:
     id: str
@@ -95,6 +111,9 @@ class Post:
     is_mention: bool = False
     file_ids: tuple[str, ...] = ()
     permalink: str = ""
+    post_type: str = ""
+    edit_at: int = 0
+    is_from_bot: bool = False
 
     @property
     def create_at_iso(self) -> str:
@@ -111,6 +130,7 @@ class Post:
     ) -> Post:
         post_id = str(raw.get("id", ""))
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        props = raw.get("props") if isinstance(raw.get("props"), dict) else {}
         message = str(raw.get("message", ""))
         files = raw.get("file_ids") if isinstance(raw.get("file_ids"), list) else []
         return cls(
@@ -128,6 +148,134 @@ class Post:
             is_mention=_contains_mention(message, current_username),
             file_ids=tuple(str(item) for item in files),
             permalink=f"{base_url.rstrip('/')}/_redirect/pl/{post_id}" if post_id else "",
+            post_type=str(raw.get("type", "")),
+            edit_at=_integer(raw.get("edit_at")),
+            is_from_bot=_truthy(props.get("from_bot")),
+        )
+
+
+def _post_data(data: dict[str, Any]) -> dict[str, Any]:
+    value = data.get("post")
+    return value if isinstance(value, dict) else {}
+
+
+def _reaction_data(data: dict[str, Any]) -> dict[str, Any]:
+    value = data.get("reaction")
+    return value if isinstance(value, dict) else {}
+
+
+def _event_post_id(data: dict[str, Any]) -> str:
+    post = _post_data(data)
+    reaction = _reaction_data(data)
+    return str(post.get("id") or data.get("post_id") or reaction.get("post_id") or "")
+
+
+def _event_channel_id(data: dict[str, Any], broadcast: dict[str, Any]) -> str:
+    post = _post_data(data)
+    reaction = _reaction_data(data)
+    return str(
+        broadcast.get("channel_id")
+        or data.get("channel_id")
+        or post.get("channel_id")
+        or reaction.get("channel_id")
+        or ""
+    )
+
+
+def _fallback_identity(event: str, data: dict[str, Any]) -> dict[str, Any]:
+    stable_data = {key: value for key, value in data.items() if key != "connection_id"}
+    return {"event": event, "data": stable_data}
+
+
+def _semantic_identity(event: str, data: dict[str, Any]) -> dict[str, Any]:
+    post = _post_data(data)
+    reaction = _reaction_data(data)
+    post_id = _event_post_id(data)
+    if event == "posted" and post_id:
+        return {
+            "event": event,
+            "post_id": post_id,
+            "create_at": _integer(post.get("create_at")),
+            "update_at": _integer(post.get("update_at")),
+            "edit_at": _integer(post.get("edit_at")),
+        }
+    if event == "post_edited" and post_id:
+        return {
+            "event": event,
+            "post_id": post_id,
+            "update_at": _integer(post.get("update_at")),
+            "edit_at": _integer(post.get("edit_at")),
+        }
+    if event == "post_deleted" and post_id:
+        return {
+            "event": event,
+            "post_id": post_id,
+            "delete_at": _integer(post.get("delete_at") or data.get("delete_at")),
+        }
+    reaction_user_id = str(reaction.get("user_id", ""))
+    reaction_emoji = str(reaction.get("emoji_name", ""))
+    if (
+        event in {"reaction_added", "reaction_removed"}
+        and post_id
+        and reaction_user_id
+        and reaction_emoji
+    ):
+        identity = {
+            "event": event,
+            "post_id": post_id,
+            "user_id": reaction_user_id,
+            "emoji_name": reaction_emoji,
+        }
+        if reaction.get("create_at") is not None:
+            identity["create_at"] = _integer(reaction.get("create_at"))
+        return identity
+    if event == "hello":
+        return {
+            "event": event,
+            "server_type": str(data.get("server_type", "")),
+            "server_version": str(data.get("server_version", "")),
+        }
+    return _fallback_identity(event, data)
+
+
+def _semantic_key(event: str, data: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        _semantic_identity(event, data),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return f"rt1:{hashlib.sha256(encoded).hexdigest()}"
+
+
+@dataclass(frozen=True, slots=True)
+class RealtimeEvent:
+    event: str
+    data: dict[str, Any]
+    broadcast: dict[str, Any]
+    seq: int
+    channel_id: str = ""
+    post_id: str = ""
+    post: Post | None = None
+    semantic_key: str = ""
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any], *, base_url: str) -> RealtimeEvent:
+        event = str(raw.get("event", ""))
+        raw_data = raw.get("data")
+        raw_broadcast = raw.get("broadcast")
+        data = copy.deepcopy(raw_data) if isinstance(raw_data, dict) else {}
+        broadcast = copy.deepcopy(raw_broadcast) if isinstance(raw_broadcast, dict) else {}
+        post_raw = _post_data(data)
+        return cls(
+            event=event,
+            data=data,
+            broadcast=broadcast,
+            seq=_integer(raw.get("seq")),
+            channel_id=_event_channel_id(data, broadcast),
+            post_id=_event_post_id(data),
+            post=(Post.from_api(post_raw, base_url=base_url) if post_raw else None),
+            semantic_key=_semantic_key(event, data),
         )
 
 

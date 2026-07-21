@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import io
+import json
 
 import pytest
 
-from time_toolkit.cli import _require_profile, _write_mode, build_parser
+from time_toolkit.cli import _require_profile, _write_mode, build_parser, cmd_watch
+from time_toolkit.config import Profile
 from time_toolkit.errors import UsageError
+from time_toolkit.models import RealtimeEvent
+from time_toolkit.output import emit
+from time_toolkit.realtime import RealtimeService
 
 
 def test_parser_uses_time_toolkit_command_name():
@@ -57,3 +63,74 @@ def test_profile_parser_collects_explicit_websocket_hosts():
         ]
     )
     assert args.websocket_hosts == ["socket.example.test", "events.example.test:8443"]
+
+
+def test_watch_keeps_ndjson_envelope_and_uses_public_realtime_service(monkeypatch):
+    selected: dict[str, object] = {}
+    stream = io.StringIO()
+
+    class FakeRealtimeService:
+        profile = Profile("selected", "https://time.example.test")
+        server = profile.base_url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        @staticmethod
+        def resolve_channel(value):
+            raise AssertionError(f"Unexpected channel lookup: {value}")
+
+        @staticmethod
+        def iter_events(**kwargs):
+            selected["iter_events"] = kwargs
+            yield RealtimeEvent.from_api(
+                {
+                    "event": "posted",
+                    "data": {
+                        "post": {
+                            "id": "post-id",
+                            "channel_id": "channel-id",
+                            "message": "Synthetic message",
+                            "create_at": 10,
+                        }
+                    },
+                    "broadcast": {"channel_id": "channel-id"},
+                    "seq": 2,
+                },
+                base_url="https://time.example.test",
+            )
+
+    def open_service(cls, profile_name, *, config=None, **_kwargs):
+        del cls
+        selected["profile"] = profile_name
+        selected["config_type"] = type(config).__name__
+        return FakeRealtimeService()
+
+    monkeypatch.setattr(RealtimeService, "open", classmethod(open_service))
+    monkeypatch.setattr(
+        "time_toolkit.cli.emit", lambda data, **kwargs: emit(data, stream=stream, **kwargs)
+    )
+    args = build_parser().parse_args(
+        ["--profile", "selected", "--format", "ndjson", "watch", "--once"]
+    )
+    assert cmd_watch(args) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["schema_version"] == "1.0"
+    assert payload["profile"] == "selected"
+    assert payload["server"] == "https://time.example.test"
+    assert payload["data"]["event"] == "posted"
+    assert payload["data"]["data"]["post"]["id"] == "post-id"
+    assert payload["data"]["broadcast"]["channel_id"] == "channel-id"
+    assert payload["data"]["seq"] == 2
+    assert payload["data"]["semantic_key"].startswith("rt1:")
+    assert selected["profile"] == "selected"
+    assert selected["config_type"] == "ConfigStore"
+    assert selected["iter_events"] == {
+        "event_types": {"posted"},
+        "channel_ids": set(),
+        "reconnect": True,
+        "max_reconnects": 0,
+    }

@@ -20,8 +20,8 @@ CLI (cli.py)        MCP (mcp_server.py)        HTTP (http_api.py)
                             │
           ┌─────────────────┴──────────────────┐
           ▼                                    ▼
-ConfigStore + SecretStore              RealtimeClient
-config.py + auth.py                    realtime.py, WebSocket
+ConfigStore + SecretStore              RealtimeService
+config.py + auth.py                    RealtimeClient, WebSocket
 ```
 
 Модели находятся в `models.py`, разбор времени — в `dates.py`, машинный вывод — в
@@ -179,8 +179,13 @@ Upload идёт multipart-запросом с локального пути. Dow
 
 ## WebSocket
 
-`RealtimeClient` сначала запрашивает публичный `WebsocketURL`. Если это не удалось,
-он строит `wss://HOST/api/v4/websocket` из base URL. Рекламируемый URL проверяется:
+Публичный `RealtimeService` требует явное имя профиля, загружает его через
+`ConfigStore`, получает токен через `SecretStore` и управляет HTTP/WebSocket
+lifecycle. Низкоуровневый `RealtimeClient` получает готовый `AuthContext` и
+endpoint; внешним интеграциям он не нужен.
+
+Сервис сначала запрашивает публичный `WebsocketURL`. Если это не удалось, он строит
+`wss://HOST/api/v4/websocket` из base URL. Рекламируемый URL проверяется:
 
 - схема только `ws`/`wss`, есть hostname, нет userinfo, query и fragment;
 - HTTPS-профиль нельзя понизить до `ws://`;
@@ -198,11 +203,19 @@ Handshake:
 3. Mattermost `authentication_challenge`;
 4. ожидание подтверждения или `hello`;
 5. нормализация вложенных `post`, `reaction`, `preference`;
-6. фильтр типа и channel ID;
-7. дедупликация SHA-256 последних 2000 событий.
+6. создание `RealtimeEvent` и типизированного `Post`;
+7. вычисление server-local `semantic_key` без transport `seq`;
+8. фильтр типа и channel ID;
+9. bounded-дедупликация последних 2000 semantic keys.
 
-При разрыве reconnect delay растёт 1, 2, 4, 8 секунд до 30. Дедупликация не
-сохраняется между процессами.
+Для известных post/reaction events ключ использует upstream ID и timestamp ревизии;
+для неизвестных — канонический hash типа и `data`. Префикс `rt1:` версионирует
+алгоритм. Внешний consumer хранит пару `(profile, semantic_key)`, потому что профиль
+и сервер намеренно не входят в ключ события.
+
+При разрыве reconnect delay растёт 1, 2, 4, 8 секунд до 30. `AuthenticationError`
+не повторяется. Дедупликация не сохраняется между процессами: WebSocket не является
+durable queue, поэтому после перезапуска нужен REST catch-up с overlap.
 
 ## Политика записи
 
@@ -257,7 +270,7 @@ CLI выбирает `automated` только для `--yes`; интеракти
 - команда `timetk`, её JSON envelope и exit codes;
 - перечисленные MCP tools;
 - перечисленные HTTP routes;
-- `TimeService` и модели из `time_toolkit.models`.
+- `TimeService`, `RealtimeService` и модели из `time_toolkit.models`.
 
 `TimeClient`, private helpers с `_`, внутренние Mattermost payload и структура
 MCP prepared-write store могут меняться в `0.x`. Закрепляйте версию и проверяйте

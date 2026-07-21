@@ -133,11 +133,22 @@ if (child.exitCode !== 0) {
 
 Consumer должен быть идемпотентным. WebSocket удаляет недавние дубли только в
 памяти текущего процесса; после перезапуска то же событие может прийти снова.
-Храните обработанные Mattermost event/post IDs либо собственный checkpoint.
+Храните пару `(profile, semantic_key)`, `post_id`, `update_at` и собственный
+checkpoint. `semantic_key` имеет формат `rt1:...`, не зависит от WebSocket `seq` и
+одинаков для логического повтора после reconnect. Он server-local, поэтому профиль
+должен быть частью ключа внешней базы.
 
 События имеют upstream-форму Mattermost WebSocket, а вложенные JSON-строки
 `post`, `reaction` и `preference` уже декодированы. Конкретный набор полей зависит
-от версии Time, поэтому игнорируйте неизвестные поля.
+от версии Time, поэтому игнорируйте неизвестные поля. К исходным `event`, `data`,
+`broadcast` и `seq` аддитивно добавляются `channel_id`, `post_id`, типизированный
+`post` и `semantic_key`; `schema_version` остаётся `1.0`.
+
+WebSocket не является durable queue. После старта или разрыва запускайте REST
+catch-up от последнего сохранённого timestamp с небольшим overlap, затем повторно
+отбрасывайте известные `semantic_key`, `post_id` и `update_at`. Только после
+успешного catch-up продвигайте checkpoint. Time Toolkit не создаёт постоянное
+зеркало и не меняет read state во время чтения истории.
 
 ## Локальный HTTP-клиент
 
@@ -291,7 +302,12 @@ Mattermost-совместимость idempotency зависит от endpoint �
 
 - CLI, MCP и локальный HTTP-процесс могут читать его из keyring;
 - HTTP-потребитель получает отдельный service key;
-- контейнер получает только токен нужного профиля как runtime secret.
+- `timetk -o ndjson watch` может работать отдельным gateway-процессом, а consumer
+  получать только выбранные события из stdout;
+- Python-процесс с `TimeService` или `RealtimeService` имеет доступ к токену через
+  `SecretStore`, поэтому его нельзя считать изолированным consumer;
+- если контейнеру действительно нужен прямой доступ, он получает только токен
+  нужного профиля как runtime secret.
 
 Не включайте stdout/stderr команды в telemetry без фильтрации. В stdout есть
 сообщения и профили, в stderr — тексты ошибок и иногда названия кандидатов каналов.

@@ -576,28 +576,20 @@ def cmd_mcp(_: argparse.Namespace) -> int:
 
 def cmd_watch(args: argparse.Namespace) -> int:
     try:
-        from time_toolkit.realtime import RealtimeClient
+        from time_toolkit.realtime import RealtimeService
     except ImportError as exc:
         raise UsageError(
             "Realtime support is not installed; install time-toolkit[realtime]"
         ) from exc
 
-    with TimeService.open(_require_profile(args)) as service:
+    config = ConfigStore()
+    profile_name = _require_profile(args) or config.get_profile().name
+    with RealtimeService.open(profile_name, config=config) as service:
         channel_ids = {service.resolve_channel(value).id for value in args.channel}
-        try:
-            advertised_url = service.client.get_websocket_url()
-        except TimeToolkitError:
-            advertised_url = ""
-        watcher = RealtimeClient(
-            service.profile.base_url,
-            service.client.auth,
-            advertised_url=advertised_url,
-            allowed_websocket_hosts=service.profile.allowed_websocket_hosts,
-        )
         events = set(args.event or ["posted"])
         maximum = 1 if args.once else max(0, args.max_events)
         for count, event in enumerate(
-            watcher.iter_events(
+            service.iter_events(
                 event_types=events,
                 channel_ids=channel_ids,
                 reconnect=not args.no_reconnect,
@@ -609,7 +601,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
             emit(
                 event,
                 profile=service.profile.name,
-                server=service.profile.base_url,
+                server=service.server,
                 output_format=output_format,
                 meta={"stream": "websocket"},
             )

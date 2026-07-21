@@ -5,7 +5,18 @@
 
 ## [Unreleased]
 
-Пока нет изменений.
+### Добавлено
+
+- публичные `RealtimeService` и `RealtimeEvent` для профильного Python-consumer;
+- server-local `semantic_key` с версионированным форматом `rt1:` для дедупликации
+  логических событий после reconnect;
+- поля `post_type`, `edit_at` и `is_from_bot` в модели `Post`.
+
+### Изменено
+
+- `timetk watch` использует публичный realtime API и аддитивно возвращает
+  `channel_id`, `post_id`, типизированный `post` и `semantic_key`;
+- WebSocket-дедупликация больше не зависит от transport `seq`.
 
 ## [0.1.0] — 2026-07-20
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import ssl
@@ -15,8 +14,16 @@ from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect
 
 from time_toolkit import __version__
-from time_toolkit.auth import AuthContext
-from time_toolkit.errors import AuthenticationError, NetworkError, UsageError
+from time_toolkit.auth import AuthContext, SecretStore
+from time_toolkit.config import ConfigStore
+from time_toolkit.errors import (
+    AuthenticationError,
+    NetworkError,
+    TimeToolkitError,
+    UsageError,
+)
+from time_toolkit.models import Channel, RealtimeEvent
+from time_toolkit.service import TimeService
 
 log = logging.getLogger(__name__)
 
@@ -134,38 +141,17 @@ def normalize_event(payload: str | bytes) -> dict[str, Any]:
     return value
 
 
-def _event_channel_id(event: dict[str, Any]) -> str:
-    broadcast = event.get("broadcast")
-    if isinstance(broadcast, dict) and broadcast.get("channel_id"):
-        return str(broadcast["channel_id"])
-    data = event.get("data")
-    if not isinstance(data, dict):
-        return ""
-    if data.get("channel_id"):
-        return str(data["channel_id"])
-    post = data.get("post")
-    if isinstance(post, dict):
-        return str(post.get("channel_id", ""))
-    reaction = data.get("reaction")
-    if isinstance(reaction, dict):
-        return str(reaction.get("channel_id", ""))
-    return ""
-
-
 class _RecentEvents:
     def __init__(self, maximum: int = 2_000) -> None:
         self.maximum = maximum
         self._queue: deque[str] = deque()
         self._seen: set[str] = set()
 
-    def add(self, event: dict[str, Any]) -> bool:
-        digest = hashlib.sha256(
-            json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        if digest in self._seen:
+    def add(self, semantic_key: str) -> bool:
+        if semantic_key in self._seen:
             return False
-        self._queue.append(digest)
-        self._seen.add(digest)
+        self._queue.append(semantic_key)
+        self._seen.add(semantic_key)
         while len(self._queue) > self.maximum:
             self._seen.remove(self._queue.popleft())
         return True
@@ -200,7 +186,7 @@ class RealtimeClient:
         channel_ids: set[str] | None = None,
         reconnect: bool = True,
         max_reconnects: int = 0,
-    ) -> Iterator[dict[str, Any]]:
+    ) -> Iterator[RealtimeEvent]:
         selected_events = event_types or set()
         selected_channels = channel_ids or set()
         reconnects = 0
@@ -224,7 +210,7 @@ class RealtimeClient:
 
     def _connection_events(
         self, event_types: set[str], channel_ids: set[str]
-    ) -> Iterator[dict[str, Any]]:
+    ) -> Iterator[RealtimeEvent]:
         with self._connector(
             self.endpoint,
             ssl=websocket_ssl_context(self.endpoint),
@@ -259,16 +245,113 @@ class RealtimeClient:
             else:
                 raise AuthenticationError("Time did not confirm WebSocket authentication")
 
-            for event in pending:
-                if self._matches(event, event_types, channel_ids) and self._recent.add(event):
+            for payload in pending:
+                event = RealtimeEvent.from_api(payload, base_url=self.base_url)
+                if self._matches(event, event_types, channel_ids) and self._recent.add(
+                    event.semantic_key
+                ):
                     yield event
             while True:
-                event = normalize_event(connection.recv())
-                if self._matches(event, event_types, channel_ids) and self._recent.add(event):
+                payload = normalize_event(connection.recv())
+                event = RealtimeEvent.from_api(payload, base_url=self.base_url)
+                if self._matches(event, event_types, channel_ids) and self._recent.add(
+                    event.semantic_key
+                ):
                     yield event
 
     @staticmethod
-    def _matches(event: dict[str, Any], event_types: set[str], channel_ids: set[str]) -> bool:
-        if event_types and str(event.get("event", "")) not in event_types:
+    def _matches(event: RealtimeEvent, event_types: set[str], channel_ids: set[str]) -> bool:
+        if event_types and event.event not in event_types:
             return False
-        return not channel_ids or _event_channel_id(event) in channel_ids
+        return not channel_ids or event.channel_id in channel_ids
+
+
+class RealtimeService:
+    """Profile-aware public API for consuming Time WebSocket events."""
+
+    def __init__(self, time_service: TimeService, client: RealtimeClient) -> None:
+        self._time_service = time_service
+        self._client = client
+        self._active: set[Iterator[RealtimeEvent]] = set()
+        self._closed = False
+        self.profile = time_service.profile
+
+    @classmethod
+    def open(
+        cls,
+        profile_name: str,
+        *,
+        config: ConfigStore | None = None,
+        secrets: SecretStore | None = None,
+        connector: Callable[..., Any] = connect,
+    ) -> RealtimeService:
+        if not profile_name or not profile_name.strip():
+            raise UsageError("RealtimeService requires an explicit profile name")
+        time_service = TimeService.open(profile_name, config=config, secrets=secrets)
+        try:
+            try:
+                advertised_url = time_service.client.get_websocket_url()
+            except TimeToolkitError:
+                advertised_url = ""
+            client = RealtimeClient(
+                time_service.profile.base_url,
+                time_service.client.auth,
+                advertised_url=advertised_url,
+                allowed_websocket_hosts=time_service.profile.allowed_websocket_hosts,
+                connector=connector,
+            )
+        except BaseException:
+            time_service.close()
+            raise
+        return cls(time_service, client)
+
+    @property
+    def server(self) -> str:
+        return self.profile.base_url
+
+    def resolve_channel(self, value: str) -> Channel:
+        return self._time_service.resolve_channel(value)
+
+    def iter_events(
+        self,
+        *,
+        event_types: set[str] | None = None,
+        channel_ids: set[str] | None = None,
+        reconnect: bool = True,
+        max_reconnects: int = 0,
+    ) -> Iterator[RealtimeEvent]:
+        if self._closed:
+            raise UsageError("RealtimeService is closed")
+        source = self._client.iter_events(
+            event_types=event_types,
+            channel_ids=channel_ids,
+            reconnect=reconnect,
+            max_reconnects=max_reconnects,
+        )
+        self._active.add(source)
+        try:
+            yield from source
+        finally:
+            self._active.discard(source)
+            close = getattr(source, "close", None)
+            if callable(close):
+                close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            for source in tuple(self._active):
+                close = getattr(source, "close", None)
+                if callable(close):
+                    close()
+        finally:
+            self._active.clear()
+            self._time_service.close()
+
+    def __enter__(self) -> RealtimeService:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()

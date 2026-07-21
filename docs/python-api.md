@@ -99,6 +99,59 @@ download_file(file_id, destination, *, overwrite=False) -> Path
 Чтение не меняет read state. `download_file` меняет только локальную файловую
 систему, пишет через временный файл и не изменяет Time.
 
+## Realtime-события
+
+Для долговременного WebSocket-consumer используйте публичный `RealtimeService`,
+а не низкоуровневый `RealtimeClient` и не `service.client`:
+
+```python
+from time_toolkit.realtime import RealtimeService
+
+with RealtimeService.open("university") as realtime:
+    channel = realtime.resolve_channel("general")
+    for event in realtime.iter_events(
+        event_types={"posted", "post_edited", "post_deleted"},
+        channel_ids={channel.id},
+        reconnect=True,
+        max_reconnects=0,
+    ):
+        save_once("university", event.semantic_key, event)
+```
+
+`RealtimeService.open()` требует явное имя профиля, получает конфигурацию и секрет,
+проверяет рекламируемый WebSocket host и закрывает HTTP/WebSocket-ресурсы при выходе
+из `with`. Для изолированных deployment можно передать отдельные `ConfigStore` и
+`SecretStore`:
+
+```python
+RealtimeService.open(
+    profile_name: str,
+    *,
+    config: ConfigStore | None = None,
+    secrets: SecretStore | None = None,
+) -> RealtimeService
+```
+
+`iter_events()` поддерживает `event_types`, `channel_ids`, `reconnect` и
+`max_reconnects`. Ноль reconnect-попыток означает неограниченное переподключение.
+`AuthenticationError` завершает iterator немедленно; разрывы сети используют
+ограниченный exponential backoff.
+
+Каждый `RealtimeEvent` содержит исходные нормализованные `data` и `broadcast`,
+`event`, `seq`, вычисленные `channel_id` и `post_id`, необязательный типизированный
+`post` и непрозрачный `semantic_key` вида `rt1:...`. Ключ не зависит от WebSocket
+`seq`, поэтому повтор события после reconnect получает то же значение. Ключ
+server-local: постоянная база должна использовать пару `(profile, semantic_key)`.
+
+WebSocket не является durable queue. После перезапуска consumer обязан выполнить
+REST catch-up с небольшим временным overlap, повторно отбросить известные
+`semantic_key`/`post_id`/`update_at` и только затем продолжить live-поток. Встроенная
+дедупликация хранит только последние 2000 событий в памяти процесса.
+
+Python-процесс с `RealtimeService` получает токен через `SecretStore`. Если consumer
+не должен иметь доступ к токену, запускайте `timetk -o ndjson watch` отдельным
+gateway-процессом и передавайте consumer только его stdout.
+
 ## Запись и `write_mode`
 
 По умолчанию сервис работает как автоматическая интеграция:
@@ -171,7 +224,15 @@ upload_files(channel, files) -> list[str]
 
 `id`, `channel_id`, `user_id`, `message`, `create_at`, `update_at`, `delete_at`,
 `root_id`, `author`, `reply_count`, `is_pinned`, `is_mention`, `file_ids`,
-`permalink` и свойство `create_at_iso`. Timestamps хранятся в миллисекундах.
+`permalink`, `post_type`, `edit_at`, `is_from_bot` и свойство `create_at_iso`.
+Timestamps хранятся в миллисекундах. Полный `props` не копируется в `Post`, но
+остаётся в `RealtimeEvent.data`, если он пришёл в WebSocket payload.
+
+### `RealtimeEvent`
+
+`event`, `data`, `broadcast`, `seq`, `channel_id`, `post_id`, `post` и
+`semantic_key`. Неизвестные поля `data` и `broadcast` сохраняются. Для
+JSON-совместимого представления используйте тот же `primitive()`.
 
 ### `Thread`
 
