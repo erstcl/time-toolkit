@@ -22,10 +22,18 @@ from time_toolkit.errors import (
     TimeToolkitError,
     UsageError,
 )
-from time_toolkit.models import Channel, RealtimeEvent
+from time_toolkit.models import Channel, RealtimeConnection, RealtimeEvent
 from time_toolkit.service import TimeService
 
 log = logging.getLogger(__name__)
+
+ConnectionCallback = Callable[[RealtimeConnection], None]
+
+
+class _ConnectionCallbackError(Exception):
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        super().__init__(str(error))
 
 
 def _endpoint(parsed, *, default_port: int) -> tuple[str, int]:
@@ -186,13 +194,36 @@ class RealtimeClient:
         channel_ids: set[str] | None = None,
         reconnect: bool = True,
         max_reconnects: int = 0,
+        on_connected: ConnectionCallback | None = None,
     ) -> Iterator[RealtimeEvent]:
         selected_events = event_types or set()
         selected_channels = channel_ids or set()
         reconnects = 0
+        connected_once = False
+
+        def notify_connected(connection_id: str) -> None:
+            nonlocal connected_once
+            connection = RealtimeConnection(
+                state="connected",
+                reconnected=connected_once,
+                connection_id=connection_id,
+            )
+            connected_once = True
+            if on_connected is not None:
+                try:
+                    on_connected(connection)
+                except Exception as exc:
+                    raise _ConnectionCallbackError(exc) from exc
+
         while True:
             try:
-                yield from self._connection_events(selected_events, selected_channels)
+                yield from self._connection_events(
+                    selected_events,
+                    selected_channels,
+                    on_connected=notify_connected,
+                )
+            except _ConnectionCallbackError as exc:
+                raise exc.error from exc
             except AuthenticationError:
                 raise
             except (OSError, TimeoutError, WebSocketException) as exc:
@@ -209,7 +240,11 @@ class RealtimeClient:
             time.sleep(min(2 ** (reconnects - 1), 30))
 
     def _connection_events(
-        self, event_types: set[str], channel_ids: set[str]
+        self,
+        event_types: set[str],
+        channel_ids: set[str],
+        *,
+        on_connected: Callable[[str], None],
     ) -> Iterator[RealtimeEvent]:
         with self._connector(
             self.endpoint,
@@ -244,6 +279,14 @@ class RealtimeClient:
                     break
             else:
                 raise AuthenticationError("Time did not confirm WebSocket authentication")
+
+            connection_id = ""
+            for payload in pending:
+                data = payload.get("data")
+                if payload.get("event") == "hello" and isinstance(data, dict):
+                    connection_id = str(data.get("connection_id", ""))
+                    break
+            on_connected(connection_id)
 
             for payload in pending:
                 event = RealtimeEvent.from_api(payload, base_url=self.base_url)
@@ -310,7 +353,12 @@ class RealtimeService:
         return self.profile.base_url
 
     def resolve_channel(self, value: str) -> Channel:
+        self._ensure_open()
         return self._time_service.resolve_channel(value)
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise UsageError("RealtimeService is closed")
 
     def iter_events(
         self,
@@ -319,14 +367,15 @@ class RealtimeService:
         channel_ids: set[str] | None = None,
         reconnect: bool = True,
         max_reconnects: int = 0,
+        on_connected: ConnectionCallback | None = None,
     ) -> Iterator[RealtimeEvent]:
-        if self._closed:
-            raise UsageError("RealtimeService is closed")
+        self._ensure_open()
         source = self._client.iter_events(
             event_types=event_types,
             channel_ids=channel_ids,
             reconnect=reconnect,
             max_reconnects=max_reconnects,
+            on_connected=on_connected,
         )
         self._active.add(source)
         try:

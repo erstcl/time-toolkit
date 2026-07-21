@@ -10,7 +10,7 @@ pytest.importorskip("websockets")
 from time_toolkit.auth import AuthContext
 from time_toolkit.config import Profile
 from time_toolkit.errors import AuthenticationError, UsageError
-from time_toolkit.models import Channel, RealtimeEvent, primitive
+from time_toolkit.models import Channel, RealtimeConnection, RealtimeEvent, primitive
 from time_toolkit.realtime import (
     RealtimeClient,
     RealtimeService,
@@ -248,6 +248,32 @@ def test_semantic_key_handles_deleted_reactions_hello_and_unknown_events():
     assert first_reaction.semantic_key != second_reaction.semantic_key
     assert hello_a.semantic_key == hello_b.semantic_key
     assert unknown_a.semantic_key == unknown_b.semantic_key
+    assert unknown_a.semantic_key.startswith("rt2:")
+
+
+def test_unknown_event_semantic_key_includes_stable_routing_context():
+    def event(channel_id: str, *, seq: int, omit_users: list[str]):
+        return RealtimeEvent.from_api(
+            {
+                "event": "future_event",
+                "data": {"value": 1, "connection_id": f"connection-{seq}"},
+                "broadcast": {
+                    "channel_id": channel_id,
+                    "team_id": "team-id",
+                    "user_id": "user-id",
+                    "omit_users": omit_users,
+                },
+                "seq": seq,
+            },
+            base_url="https://time.example.test",
+        )
+
+    first = event("channel-a", seq=1, omit_users=["first-user"])
+    replay = event("channel-a", seq=99, omit_users=["second-user"])
+    other_channel = event("channel-b", seq=2, omit_users=["first-user"])
+    assert first.semantic_key.startswith("rt2:")
+    assert first.semantic_key == replay.semantic_key
+    assert first.semantic_key != other_channel.semantic_key
 
 
 def test_realtime_authenticates_then_filters_and_yields():
@@ -333,14 +359,22 @@ def test_reconnect_deduplicates_same_event_with_a_new_seq(monkeypatch):
     }
     first = FakeConnection(
         [
-            {"status": "OK", "seq_reply": 1},
+            {
+                "event": "hello",
+                "data": {"connection_id": "connection-first"},
+                "seq": 0,
+            },
             {"event": "posted", "data": {"post": post}, "seq": 2},
         ],
         disconnect_error=OSError("synthetic disconnect"),
     )
     second = FakeConnection(
         [
-            {"status": "OK", "seq_reply": 1},
+            {
+                "event": "hello",
+                "data": {"connection_id": "connection-second"},
+                "seq": 0,
+            },
             {"event": "posted", "data": {"post": post}, "seq": 99},
             {
                 "event": "post_edited",
@@ -356,12 +390,116 @@ def test_reconnect_deduplicates_same_event_with_a_new_seq(monkeypatch):
         AuthContext("secret"),
         connector=lambda *_args, **_kwargs: next(connections),
     )
+    timeline: list[tuple[str, object]] = []
+
+    def on_connected(connection: RealtimeConnection) -> None:
+        timeline.append(("connected", connection))
+
     events = client.iter_events(
-        event_types={"posted", "post_edited"}, reconnect=True, max_reconnects=1
+        event_types={"posted", "post_edited"},
+        reconnect=True,
+        max_reconnects=1,
+        on_connected=on_connected,
     )
-    assert next(events).event == "posted"
-    assert next(events).event == "post_edited"
+    first_event = next(events)
+    timeline.append(("event", first_event.event))
+    second_event = next(events)
+    timeline.append(("event", second_event.event))
     events.close()
+    assert timeline == [
+        (
+            "connected",
+            RealtimeConnection(
+                state="connected",
+                reconnected=False,
+                connection_id="connection-first",
+            ),
+        ),
+        ("event", "posted"),
+        (
+            "connected",
+            RealtimeConnection(
+                state="connected",
+                reconnected=True,
+                connection_id="connection-second",
+            ),
+        ),
+        ("event", "post_edited"),
+    ]
+
+
+def test_reconnect_callback_recovers_gap_before_next_live_event(monkeypatch):
+    def posted(post_id: str, seq: int) -> dict[str, object]:
+        return {
+            "event": "posted",
+            "data": {
+                "post": {
+                    "id": post_id,
+                    "channel_id": "channel-id",
+                    "create_at": seq,
+                    "update_at": seq,
+                }
+            },
+            "seq": seq,
+        }
+
+    first = FakeConnection(
+        [
+            {"event": "hello", "data": {"connection_id": "first"}, "seq": 0},
+            posted("post-a", 1),
+        ],
+        disconnect_error=OSError("synthetic disconnect"),
+    )
+    second = FakeConnection(
+        [
+            {"event": "hello", "data": {"connection_id": "second"}, "seq": 0},
+            posted("post-c", 3),
+        ]
+    )
+    connections = iter([first, second])
+    monkeypatch.setattr("time_toolkit.realtime.time.sleep", lambda _delay: None)
+    client = RealtimeClient(
+        "https://time.example.test",
+        AuthContext("secret"),
+        connector=lambda *_args, **_kwargs: next(connections),
+    )
+    handled: list[str] = []
+
+    def catch_up(connection: RealtimeConnection) -> None:
+        if connection.reconnected:
+            handled.append("post-b-rest")
+
+    events = client.iter_events(
+        event_types={"posted"},
+        reconnect=True,
+        max_reconnects=1,
+        on_connected=catch_up,
+    )
+    handled.append(next(events).post_id)
+    handled.append(next(events).post_id)
+    events.close()
+    assert handled == ["post-a", "post-b-rest", "post-c"]
+
+
+def test_connection_callback_failure_does_not_trigger_reconnect():
+    calls = 0
+
+    def connector(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return FakeConnection([{"event": "hello", "data": {"connection_id": "first"}, "seq": 0}])
+
+    def fail_catch_up(_connection: RealtimeConnection) -> None:
+        raise OSError("synthetic catch-up failure")
+
+    client = RealtimeClient(
+        "https://time.example.test",
+        AuthContext("secret"),
+        connector=connector,
+    )
+    with pytest.raises(OSError, match="catch-up failure"):
+        next(client.iter_events(reconnect=True, on_connected=fail_catch_up))
+    assert calls == 1
 
 
 def test_authentication_rejection_does_not_reconnect():
@@ -440,6 +578,10 @@ def test_realtime_service_uses_explicit_profile_and_closes_active_stream(monkeyp
     assert selected == {"profile": "selected", "config": config, "secrets": secrets}
     assert connection.closed is True
     assert service._time_service.closed is True
+    with pytest.raises(UsageError, match="closed"):
+        service.resolve_channel("general")
+    with pytest.raises(UsageError, match="closed"):
+        next(service.iter_events())
 
 
 def test_realtime_service_rejects_an_implicit_profile():

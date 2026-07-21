@@ -105,7 +105,12 @@ download_file(file_id, destination, *, overwrite=False) -> Path
 а не низкоуровневый `RealtimeClient` и не `service.client`:
 
 ```python
+from time_toolkit.models import RealtimeConnection
 from time_toolkit.realtime import RealtimeService
+
+
+def catch_up(connection: RealtimeConnection) -> None:
+    restore_missed_posts(overlap=True)
 
 with RealtimeService.open("university") as realtime:
     channel = realtime.resolve_channel("general")
@@ -114,6 +119,7 @@ with RealtimeService.open("university") as realtime:
         channel_ids={channel.id},
         reconnect=True,
         max_reconnects=0,
+        on_connected=catch_up,
     ):
         save_once("university", event.semantic_key, event)
 ```
@@ -132,21 +138,28 @@ RealtimeService.open(
 ) -> RealtimeService
 ```
 
-`iter_events()` поддерживает `event_types`, `channel_ids`, `reconnect` и
-`max_reconnects`. Ноль reconnect-попыток означает неограниченное переподключение.
-`AuthenticationError` завершает iterator немедленно; разрывы сети используют
-ограниченный exponential backoff.
+`iter_events()` поддерживает `event_types`, `channel_ids`, `reconnect`,
+`max_reconnects` и `on_connected`. Ноль reconnect-попыток означает неограниченное
+переподключение. Callback получает `RealtimeConnection` после успешной
+аутентификации, но до первого обычного события соединения. На первом подключении
+`reconnected=False`, на последующих — `True`. Выполняйте в callback REST catch-up;
+если он завершится ошибкой, live-обработка не продолжится. `AuthenticationError`
+завершает iterator немедленно; разрывы сети используют ограниченный exponential
+backoff.
 
 Каждый `RealtimeEvent` содержит исходные нормализованные `data` и `broadcast`,
 `event`, `seq`, вычисленные `channel_id` и `post_id`, необязательный типизированный
-`post` и непрозрачный `semantic_key` вида `rt1:...`. Ключ не зависит от WebSocket
+`post` и непрозрачный версионированный `semantic_key`. Известные post/reaction
+events используют `rt1:`, неизвестные события с routing context — `rt2:`. Не
+проверяйте конкретный префикс и не разбирайте ключ. Он не зависит от WebSocket
 `seq`, поэтому повтор события после reconnect получает то же значение. Ключ
 server-local: постоянная база должна использовать пару `(profile, semantic_key)`.
 
-WebSocket не является durable queue. После перезапуска consumer обязан выполнить
-REST catch-up с небольшим временным overlap, повторно отбросить известные
-`semantic_key`/`post_id`/`update_at` и только затем продолжить live-поток. Встроенная
-дедупликация хранит только последние 2000 событий в памяти процесса.
+WebSocket не является durable queue. После старта и каждого reconnect consumer
+обязан выполнить REST catch-up с небольшим временным overlap, повторно отбросить
+известные `semantic_key`/`post_id`/`update_at` и только затем продолжить live-поток.
+`on_connected` обеспечивает эту границу для Python. Встроенная дедупликация хранит
+только последние 2000 событий в памяти процесса.
 
 Python-процесс с `RealtimeService` получает токен через `SecretStore`. Если consumer
 не должен иметь доступ к токену, запускайте `timetk -o ndjson watch` отдельным
@@ -233,6 +246,12 @@ Timestamps хранятся в миллисекундах. Полный `props` 
 `event`, `data`, `broadcast`, `seq`, `channel_id`, `post_id`, `post` и
 `semantic_key`. Неизвестные поля `data` и `broadcast` сохраняются. Для
 JSON-совместимого представления используйте тот же `primitive()`.
+
+### `RealtimeConnection`
+
+`state`, `reconnected` и `connection_id`. Модель передаётся в `on_connected` до
+обычных событий нового соединения. `connection_id` может быть пустым, если сервер
+подтвердил authentication challenge раньше события `hello`.
 
 ### `Thread`
 

@@ -31,6 +31,8 @@ def emit(
                 "server": server,
                 "data": item,
             }
+            if payload["meta"]:
+                row["meta"] = payload["meta"]
             stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
         return
     _emit_text(data, stream)

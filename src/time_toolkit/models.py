@@ -182,36 +182,50 @@ def _event_channel_id(data: dict[str, Any], broadcast: dict[str, Any]) -> str:
     )
 
 
-def _fallback_identity(event: str, data: dict[str, Any]) -> dict[str, Any]:
+def _fallback_identity(
+    event: str, data: dict[str, Any], broadcast: dict[str, Any]
+) -> dict[str, Any]:
     stable_data = {key: value for key, value in data.items() if key != "connection_id"}
-    return {"event": event, "data": stable_data}
+    routing = {key: str(broadcast.get(key) or "") for key in ("channel_id", "team_id", "user_id")}
+    return {"event": event, "data": stable_data, "routing": routing}
 
 
-def _semantic_identity(event: str, data: dict[str, Any]) -> dict[str, Any]:
+def _semantic_identity(
+    event: str, data: dict[str, Any], broadcast: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
     post = _post_data(data)
     reaction = _reaction_data(data)
     post_id = _event_post_id(data)
     if event == "posted" and post_id:
-        return {
-            "event": event,
-            "post_id": post_id,
-            "create_at": _integer(post.get("create_at")),
-            "update_at": _integer(post.get("update_at")),
-            "edit_at": _integer(post.get("edit_at")),
-        }
+        return (
+            "rt1",
+            {
+                "event": event,
+                "post_id": post_id,
+                "create_at": _integer(post.get("create_at")),
+                "update_at": _integer(post.get("update_at")),
+                "edit_at": _integer(post.get("edit_at")),
+            },
+        )
     if event == "post_edited" and post_id:
-        return {
-            "event": event,
-            "post_id": post_id,
-            "update_at": _integer(post.get("update_at")),
-            "edit_at": _integer(post.get("edit_at")),
-        }
+        return (
+            "rt1",
+            {
+                "event": event,
+                "post_id": post_id,
+                "update_at": _integer(post.get("update_at")),
+                "edit_at": _integer(post.get("edit_at")),
+            },
+        )
     if event == "post_deleted" and post_id:
-        return {
-            "event": event,
-            "post_id": post_id,
-            "delete_at": _integer(post.get("delete_at") or data.get("delete_at")),
-        }
+        return (
+            "rt1",
+            {
+                "event": event,
+                "post_id": post_id,
+                "delete_at": _integer(post.get("delete_at") or data.get("delete_at")),
+            },
+        )
     reaction_user_id = str(reaction.get("user_id", ""))
     reaction_emoji = str(reaction.get("emoji_name", ""))
     if (
@@ -228,24 +242,35 @@ def _semantic_identity(event: str, data: dict[str, Any]) -> dict[str, Any]:
         }
         if reaction.get("create_at") is not None:
             identity["create_at"] = _integer(reaction.get("create_at"))
-        return identity
+        return "rt1", identity
     if event == "hello":
-        return {
-            "event": event,
-            "server_type": str(data.get("server_type", "")),
-            "server_version": str(data.get("server_version", "")),
-        }
-    return _fallback_identity(event, data)
+        return (
+            "rt1",
+            {
+                "event": event,
+                "server_type": str(data.get("server_type", "")),
+                "server_version": str(data.get("server_version", "")),
+            },
+        )
+    return "rt2", _fallback_identity(event, data, broadcast)
 
 
-def _semantic_key(event: str, data: dict[str, Any]) -> str:
+def _semantic_key(event: str, data: dict[str, Any], broadcast: dict[str, Any]) -> str:
+    version, identity = _semantic_identity(event, data, broadcast)
     encoded = json.dumps(
-        _semantic_identity(event, data),
+        identity,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
-    return f"rt1:{hashlib.sha256(encoded).hexdigest()}"
+    return f"{version}:{hashlib.sha256(encoded).hexdigest()}"
+
+
+@dataclass(frozen=True, slots=True)
+class RealtimeConnection:
+    state: str
+    reconnected: bool
+    connection_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,7 +300,7 @@ class RealtimeEvent:
             channel_id=_event_channel_id(data, broadcast),
             post_id=_event_post_id(data),
             post=(Post.from_api(post_raw, base_url=base_url) if post_raw else None),
-            semantic_key=_semantic_key(event, data),
+            semantic_key=_semantic_key(event, data, broadcast),
         )
 
 

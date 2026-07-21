@@ -115,15 +115,22 @@ import { createInterface } from "node:readline";
 
 const child = spawn(
   "/opt/time-toolkit/.venv/bin/timetk",
-  ["--profile", "university", "--format", "ndjson", "watch", "--event", "posted"],
+  [
+    "--profile", "university", "--format", "ndjson", "watch",
+    "--event", "posted", "--lifecycle",
+  ],
   { stdio: ["ignore", "pipe", "inherit"] },
 );
 
 const lines = createInterface({ input: child.stdout });
 for await (const line of lines) {
-  const event = JSON.parse(line);
-  if (event.schema_version !== "1.0" || event.profile !== "university") continue;
-  await handleTimeEvent(event.data);
+  const envelope = JSON.parse(line);
+  if (envelope.schema_version !== "1.0" || envelope.profile !== "university") continue;
+  if (envelope.meta?.kind === "lifecycle") {
+    await catchUpTimeHistory({ overlap: true });
+    continue;
+  }
+  await handleTimeEvent(envelope.data);
 }
 
 if (child.exitCode !== 0) {
@@ -134,9 +141,11 @@ if (child.exitCode !== 0) {
 Consumer должен быть идемпотентным. WebSocket удаляет недавние дубли только в
 памяти текущего процесса; после перезапуска то же событие может прийти снова.
 Храните пару `(profile, semantic_key)`, `post_id`, `update_at` и собственный
-checkpoint. `semantic_key` имеет формат `rt1:...`, не зависит от WebSocket `seq` и
-одинаков для логического повтора после reconnect. Он server-local, поэтому профиль
-должен быть частью ключа внешней базы.
+checkpoint. `semantic_key` не зависит от WebSocket `seq` и одинаков для логического
+повтора после reconnect. Известные события используют `rt1:`, а неизвестные могут
+использовать `rt2:` с routing context. Считайте весь ключ непрозрачным и не
+проверяйте его префикс. Он server-local, поэтому профиль должен быть частью ключа
+внешней базы.
 
 События имеют upstream-форму Mattermost WebSocket, а вложенные JSON-строки
 `post`, `reaction` и `preference` уже декодированы. Конкретный набор полей зависит
@@ -144,11 +153,13 @@ checkpoint. `semantic_key` имеет формат `rt1:...`, не зависи�
 `broadcast` и `seq` аддитивно добавляются `channel_id`, `post_id`, типизированный
 `post` и `semantic_key`; `schema_version` остаётся `1.0`.
 
-WebSocket не является durable queue. После старта или разрыва запускайте REST
-catch-up от последнего сохранённого timestamp с небольшим overlap, затем повторно
-отбрасывайте известные `semantic_key`, `post_id` и `update_at`. Только после
-успешного catch-up продвигайте checkpoint. Time Toolkit не создаёт постоянное
-зеркало и не меняет read state во время чтения истории.
+WebSocket не является durable queue. Запускайте `watch` с `--lifecycle` и после
+каждой lifecycle-строки выполняйте REST catch-up от последнего сохранённого
+timestamp с небольшим overlap. Затем повторно отбрасывайте известные
+`semantic_key`, `post_id` и `update_at`. Только после успешного catch-up продвигайте
+checkpoint. Lifecycle-строка всегда предшествует обычным событиям нового
+соединения. Time Toolkit не создаёт постоянное зеркало и не меняет read state во
+время чтения истории.
 
 ## Локальный HTTP-клиент
 

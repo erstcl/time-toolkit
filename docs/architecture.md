@@ -202,20 +202,25 @@ Handshake:
 2. auth headers/cookie;
 3. Mattermost `authentication_challenge`;
 4. ожидание подтверждения или `hello`;
-5. нормализация вложенных `post`, `reaction`, `preference`;
-6. создание `RealtimeEvent` и типизированного `Post`;
-7. вычисление server-local `semantic_key` без transport `seq`;
-8. фильтр типа и channel ID;
-9. bounded-дедупликация последних 2000 semantic keys.
+5. callback `on_connected` до обычных событий соединения;
+6. нормализация вложенных `post`, `reaction`, `preference`;
+7. создание `RealtimeEvent` и типизированного `Post`;
+8. вычисление server-local `semantic_key` без transport `seq`;
+9. фильтр типа и channel ID;
+10. bounded-дедупликация последних 2000 semantic keys.
 
 Для известных post/reaction events ключ использует upstream ID и timestamp ревизии;
-для неизвестных — канонический hash типа и `data`. Префикс `rt1:` версионирует
-алгоритм. Внешний consumer хранит пару `(profile, semantic_key)`, потому что профиль
-и сервер намеренно не входят в ключ события.
+для неизвестных — канонический hash типа, `data` и стабильных routing-полей
+`channel_id`, `team_id`, `user_id`. Известный алгоритм использует префикс `rt1:`,
+исправленный fallback — `rt2:`. Внешний consumer считает ключ непрозрачным и хранит
+пару `(profile, semantic_key)`, потому что профиль и сервер намеренно не входят в
+ключ события.
 
 При разрыве reconnect delay растёт 1, 2, 4, 8 секунд до 30. `AuthenticationError`
-не повторяется. Дедупликация не сохраняется между процессами: WebSocket не является
-durable queue, поэтому после перезапуска нужен REST catch-up с overlap.
+не повторяется. `on_connected` вызывается и после первого подключения, и после
+каждого reconnect; callback завершается до выдачи live-событий нового соединения.
+Дедупликация не сохраняется между процессами: WebSocket не является durable queue,
+поэтому после старта и reconnect нужен REST catch-up с overlap.
 
 ## Политика записи
 

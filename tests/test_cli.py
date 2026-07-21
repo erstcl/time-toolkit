@@ -9,7 +9,7 @@ import pytest
 from time_toolkit.cli import _require_profile, _write_mode, build_parser, cmd_watch
 from time_toolkit.config import Profile
 from time_toolkit.errors import UsageError
-from time_toolkit.models import RealtimeEvent
+from time_toolkit.models import RealtimeConnection, RealtimeEvent
 from time_toolkit.output import emit
 from time_toolkit.realtime import RealtimeService
 
@@ -65,7 +65,8 @@ def test_profile_parser_collects_explicit_websocket_hosts():
     assert args.websocket_hosts == ["socket.example.test", "events.example.test:8443"]
 
 
-def test_watch_keeps_ndjson_envelope_and_uses_public_realtime_service(monkeypatch):
+@pytest.mark.parametrize("lifecycle", [False, True])
+def test_watch_keeps_ndjson_envelope_and_uses_public_realtime_service(monkeypatch, lifecycle):
     selected: dict[str, object] = {}
     stream = io.StringIO()
 
@@ -86,6 +87,15 @@ def test_watch_keeps_ndjson_envelope_and_uses_public_realtime_service(monkeypatc
         @staticmethod
         def iter_events(**kwargs):
             selected["iter_events"] = kwargs
+            on_connected = kwargs.get("on_connected")
+            if on_connected is not None:
+                on_connected(
+                    RealtimeConnection(
+                        state="connected",
+                        reconnected=False,
+                        connection_id="connection-id",
+                    )
+                )
             yield RealtimeEvent.from_api(
                 {
                     "event": "posted",
@@ -113,11 +123,23 @@ def test_watch_keeps_ndjson_envelope_and_uses_public_realtime_service(monkeypatc
     monkeypatch.setattr(
         "time_toolkit.cli.emit", lambda data, **kwargs: emit(data, stream=stream, **kwargs)
     )
-    args = build_parser().parse_args(
-        ["--profile", "selected", "--format", "ndjson", "watch", "--once"]
-    )
+    argv = ["--profile", "selected", "--format", "ndjson", "watch", "--once"]
+    if lifecycle:
+        argv.append("--lifecycle")
+    args = build_parser().parse_args(argv)
     assert cmd_watch(args) == 0
-    payload = json.loads(stream.getvalue())
+    records = [json.loads(line) for line in stream.getvalue().splitlines()]
+    payload = records[-1]
+    if lifecycle:
+        connection = records[0]
+        assert connection["meta"] == {"stream": "websocket", "kind": "lifecycle"}
+        assert connection["data"] == {
+            "state": "connected",
+            "reconnected": False,
+            "connection_id": "connection-id",
+        }
+    else:
+        assert len(records) == 1
     assert payload["schema_version"] == "1.0"
     assert payload["profile"] == "selected"
     assert payload["server"] == "https://time.example.test"
@@ -128,7 +150,10 @@ def test_watch_keeps_ndjson_envelope_and_uses_public_realtime_service(monkeypatc
     assert payload["data"]["semantic_key"].startswith("rt1:")
     assert selected["profile"] == "selected"
     assert selected["config_type"] == "ConfigStore"
-    assert selected["iter_events"] == {
+    iter_options = selected["iter_events"]
+    on_connected = iter_options.pop("on_connected", None)
+    assert callable(on_connected) is lifecycle
+    assert iter_options == {
         "event_types": {"posted"},
         "channel_ids": set(),
         "reconnect": True,

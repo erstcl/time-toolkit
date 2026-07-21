@@ -215,7 +215,7 @@ timetk -p example mark-read engineering
 
 ```text
 watch [--channel CHANNEL ...] [--event TYPE ...] [--once]
-      [--max-events N] [--no-reconnect] [--max-reconnects N]
+      [--max-events N] [--lifecycle] [--no-reconnect] [--max-reconnects N]
 ```
 
 По умолчанию выбирается событие `posted`, каналы не фильтруются, а
@@ -226,6 +226,13 @@ watch [--channel CHANNEL ...] [--event TYPE ...] [--once]
 Для `-o json` и `-o ndjson` поток всегда выдаёт NDJSON: один завершённый объект на
 строку. `--once` останавливает поток после первого подходящего события;
 `--max-events N` — после N событий.
+
+`--lifecycle` добавляет служебную строку перед событиями каждого соединения.
+У неё `meta.kind="lifecycle"`, а `data` содержит `state="connected"`,
+`reconnected` и `connection_id`. На этой строке долговременный consumer должен
+выполнить REST catch-up с overlap до обработки следующих строк. Lifecycle-строки
+всегда записываются раньше обычных событий соединения и не учитываются в `--once`
+и `--max-events`.
 
 Рекламируемый сервером WebSocket URL автоматически принимается только для того же
 hostname и порта, что основной профиль. Другой endpoint нужно разрешить через
@@ -264,8 +271,8 @@ hostname и порта, что основной профиль. Другой end
 
 `data` бывает объектом, массивом или скаляром. Dataclass-модели рекурсивно
 преобразуются в JSON. `ndjson` выдаёт по строке на элемент массива; у каждой
-строки есть `schema_version`, `profile`, `server` и `data`. Для одиночного
-результата получается одна строка. `meta` в NDJSON не переносится.
+строки есть `schema_version`, `profile`, `server` и `data`. Непустое `meta`
+переносится в строку аддитивно. Для одиночного результата получается одна строка.
 
 Ошибки идут в stderr. В `json` и `ndjson` формат один:
 

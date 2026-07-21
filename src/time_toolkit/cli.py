@@ -588,16 +588,27 @@ def cmd_watch(args: argparse.Namespace) -> int:
         channel_ids = {service.resolve_channel(value).id for value in args.channel}
         events = set(args.event or ["posted"])
         maximum = 1 if args.once else max(0, args.max_events)
-        for count, event in enumerate(
-            service.iter_events(
-                event_types=events,
-                channel_ids=channel_ids,
-                reconnect=not args.no_reconnect,
-                max_reconnects=max(0, args.max_reconnects),
-            ),
-            start=1,
-        ):
-            output_format = "ndjson" if _format(args) in {"json", "ndjson"} else "text"
+        output_format = "ndjson" if _format(args) in {"json", "ndjson"} else "text"
+
+        def emit_connection(connection):
+            emit(
+                connection,
+                profile=service.profile.name,
+                server=service.server,
+                output_format=output_format,
+                meta={"stream": "websocket", "kind": "lifecycle"},
+            )
+
+        stream_options = {
+            "event_types": events,
+            "channel_ids": channel_ids,
+            "reconnect": not args.no_reconnect,
+            "max_reconnects": max(0, args.max_reconnects),
+        }
+        if args.lifecycle:
+            stream_options["on_connected"] = emit_connection
+
+        for count, event in enumerate(service.iter_events(**stream_options), start=1):
             emit(
                 event,
                 profile=service.profile.name,
@@ -778,6 +789,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--once", action="store_true", help="stop after the first matching event")
     watch.add_argument(
         "--max-events", type=int, default=0, help="stop after N events; 0 is unlimited"
+    )
+    watch.add_argument(
+        "--lifecycle",
+        action="store_true",
+        help="emit connection boundaries before live events",
     )
     watch.add_argument("--no-reconnect", action="store_true")
     watch.add_argument(

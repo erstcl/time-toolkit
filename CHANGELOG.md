@@ -5,7 +5,20 @@
 
 ## [Unreleased]
 
-Пока нет изменений.
+### Добавлено
+
+- callback `on_connected` и модель `RealtimeConnection`, позволяющие выполнить
+  REST catch-up до обработки событий нового WebSocket-соединения;
+- флаг `timetk watch --lifecycle` для NDJSON-сигнала о первичном подключении и
+  reconnect;
+- непустое поле `meta` в NDJSON-envelope для типизации служебных строк потока.
+
+### Исправлено
+
+- неизвестные события в разных каналах больше не подавляются как дубли: их
+  fallback `semantic_key` использует стабильный routing context и префикс `rt2:`;
+- `resolve_channel()` и `iter_events()` закрытого `RealtimeService` одинаково
+  возвращают понятную `UsageError`.
 
 ## [0.2.0] — 2026-07-21
 
