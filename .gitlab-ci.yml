@@ -1,0 +1,26 @@
+variables:
+  UV_VERSION: "0.11.29"
+  PYTHON_VERSION: "3.12"
+  BASE_LAYER: "trixie-slim"
+  UV_LINK_MODE: "copy"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+
+verify:
+  image: "ghcr.io/astral-sh/uv:${UV_VERSION}-python${PYTHON_VERSION}-${BASE_LAYER}"
+  interruptible: true
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .uv-cache
+  before_script:
+    - uv sync --locked --no-editable --all-extras
+  script:
+    - uv lock --check
+    - uv run --no-sync ruff format --check .
+    - uv run --no-sync ruff check .
+    - uv run --no-sync pytest
+    - uv build
+  after_script:
+    - uv cache prune --ci
