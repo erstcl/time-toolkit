@@ -1,5 +1,15 @@
 # Project instructions
 
+## Agent onboarding
+
+For a clean install, read `README.md`, `docs/getting-started.md`, and `docs/mcp.md`.
+Install the release with `uv sync --locked --no-editable --all-extras`; register
+`/absolute/path/to/time-toolkit/.venv/bin/timetk mcp` in the MCP client.
+A human must supply their own authorised Time token through the hidden `auth set`
+prompt. Default to the `readonly` profile policy and do not request, print, or
+reuse another person's token.
+
+
 - Never print, log, commit, or request Time tokens, cookies, passwords, or CSRF values.
 - Never add real Time messages, channel exports, user lists, or downloaded files as fixtures.
 - Use synthetic fixtures in tests.
