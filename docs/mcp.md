@@ -77,13 +77,22 @@ Time-инструментов.
 | `time_reactions` | `profile`, `target` | — |
 | `time_readers` | `profile`, `targets` | — |
 | `time_file_info` | `profile`, `file_id` | — |
+| `time_file_download` | `profile`, `file_id`, `output` | — |
 
 `limit` у MCP должен быть от 1 до 200. `channel_type` принимает пустую строку,
 `O`, `P`, `D` или `G`. Временные значения совпадают с CLI: ISO 8601, дата или
 `7d`/`24h`/`30m`.
 
-Все инструменты таблицы имеют MCP-аннотации `readOnlyHint=true`,
-`destructiveHint=false`, `idempotentHint=true`, `openWorldHint=true`.
+Все инструменты таблицы, кроме `time_file_download`, имеют MCP-аннотации
+`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`,
+`openWorldHint=true`.
+
+`time_file_download` читает вложение из Time и создаёт новый локальный файл в
+`~/Downloads/Time Toolkit/`. Параметр `output` обязателен, относителен к этой
+папке и не может содержать `..` или абсолютный путь. Инструмент никогда не
+заменяет существующий файл, поэтому он помечен как локальная запись, а не как
+read-only операция. Сначала при необходимости вызовите `time_file_info`, чтобы
+выбрать подходящее имя, например `production-ml/hw1-starter.zip`.
 
 ## Двухшаговая запись
 

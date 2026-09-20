@@ -50,6 +50,12 @@ READ_ONLY = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=True,
 )
+LOCAL_FILE_WRITE = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=True,
+)
 PREPARE_ONLY = ToolAnnotations(
     readOnlyHint=True,
     destructiveHint=False,
@@ -103,6 +109,19 @@ def _tool_errors(function):
             raise ToolError(exc.message) from exc
 
     return wrapped
+
+
+def _mcp_download_destination(relative_path: str) -> Path:
+    candidate = Path(relative_path.strip())
+    if not relative_path.strip() or candidate.is_absolute() or ".." in candidate.parts:
+        raise UsageError(
+            "output must be a non-empty relative path inside the Time download directory"
+        )
+    root = (Path.home() / "Downloads" / "Time Toolkit").resolve()
+    destination = (root / candidate).resolve()
+    if root not in destination.parents:
+        raise UsageError("output must stay inside the Time download directory")
+    return destination
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -303,6 +322,22 @@ def time_file_info(profile: str, file_id: str) -> dict[str, Any]:
     """Show metadata for an attached file without downloading it."""
     with _service(profile) as service:
         return _envelope(profile, service.profile.base_url, service.file_info(file_id))
+
+
+@mcp.tool(annotations=LOCAL_FILE_WRITE)
+@_tool_errors
+def time_file_download(profile: str, file_id: str, output: str) -> dict[str, Any]:
+    """Download one attachment into ~/Downloads/Time Toolkit without overwriting a file."""
+    destination = _mcp_download_destination(output)
+    with _service(profile) as service:
+        path = service.download_file(file_id, destination, overwrite=False)
+        return _envelope(
+            profile,
+            service.profile.base_url,
+            {"file_id": file_id, "path": str(path), "downloaded": True},
+            local_file_write=True,
+            overwrite=False,
+        )
 
 
 @dataclass(frozen=True, slots=True)

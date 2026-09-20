@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -25,6 +26,51 @@ def test_mcp_write_tools_enforce_prepare_then_destructive_commit():
         "action",
         "target",
     }
+    assert tools["time_file_download"].annotations.readOnlyHint is False
+    assert tools["time_file_download"].annotations.destructiveHint is False
+    assert set(tools["time_file_download"].parameters["required"]) == {
+        "profile",
+        "file_id",
+        "output",
+    }
+
+
+def test_mcp_file_download_uses_fixed_local_root_without_overwrite(monkeypatch, tmp_path):
+    observed = {}
+
+    @contextmanager
+    def fake_service(profile, *, write_mode="automated"):
+        assert write_mode == "automated"
+        yield SimpleNamespace(
+            profile=SimpleNamespace(base_url="https://time.example.test"),
+            download_file=lambda file_id, destination, *, overwrite: (
+                observed.update(
+                    file_id=file_id,
+                    destination=destination,
+                    overwrite=overwrite,
+                )
+                or destination
+            ),
+        )
+
+    monkeypatch.setattr(mcp_server, "_service", fake_service)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
+
+    result = mcp_server.time_file_download("university", "file-id", "course/task.pdf")
+
+    assert observed == {
+        "file_id": "file-id",
+        "destination": tmp_path / "Downloads" / "Time Toolkit" / "course" / "task.pdf",
+        "overwrite": False,
+    }
+    assert result["data"]["path"] == str(observed["destination"])
+    assert result["meta"] == {"local_file_write": True, "overwrite": False}
+
+
+@pytest.mark.parametrize("output", ("", "/tmp/file.pdf", "../file.pdf", "course/../../file.pdf"))
+def test_mcp_file_download_rejects_unsafe_local_paths(output):
+    with pytest.raises(ToolError, match="relative path"):
+        mcp_server.time_file_download("university", "file-id", output)
 
 
 def test_prepared_write_confirmation_is_exact_and_one_time():

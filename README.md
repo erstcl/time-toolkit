@@ -19,6 +19,7 @@ read operations.
 
 - inspect teams, channels, direct messages, posts, threads, unread messages,
   mentions, pins, flags, read receipts, reactions, users, and file metadata;
+- download one selected attachment safely through MCP into a fixed local folder;
 - search messages and users with machine-readable `text`, `json`, and `ndjson`
   output;
 - create, reply to, edit, and delete posts with an explicit write policy;

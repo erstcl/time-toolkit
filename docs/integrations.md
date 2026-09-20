@@ -352,7 +352,7 @@ Mattermost-совместимость idempotency зависит от endpoint �
 
 ## Версионирование интеграции
 
-Закрепляйте release tag `v0.3.0` или точный commit. При обновлении:
+Закрепляйте release tag `v0.4.0` или точный commit. При обновлении:
 
 1. прочитайте [CHANGELOG](../CHANGELOG.md);
 2. прогоните contract tests на синтетическом payload;
