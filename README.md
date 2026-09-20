@@ -52,6 +52,9 @@ Time Toolkit requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/erstcl/time-toolkit.git
 cd time-toolkit
+./scripts/bootstrap_agent.sh
+
+# Equivalent manual setup:
 uv sync --locked --no-editable --all-extras
 
 # Generic Mattermost-compatible server

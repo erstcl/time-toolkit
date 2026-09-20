@@ -2,7 +2,7 @@
 
 ## Agent onboarding
 
-For a clean install, read `README.md`, `docs/getting-started.md`, and `docs/mcp.md`.
+For a clean install, read `README.md`, `docs/getting-started.md`, and `docs/mcp.md`. On macOS, `scripts/bootstrap_agent.sh` installs locked dependencies and registers MCP without touching credentials.
 Install the release with `uv sync --locked --no-editable --all-extras`; register
 `/absolute/path/to/time-toolkit/.venv/bin/timetk mcp` in the MCP client.
 A human must supply their own authorised Time token through the hidden `auth set`
