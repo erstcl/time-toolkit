@@ -21,6 +21,37 @@ def make_client(handler, *, auth: AuthContext | None = None, attempts: int = 3) 
     )
 
 
+def test_root_page_requests_collapsed_threads_and_rejects_reply_fallback():
+    def handler(request):
+        assert request.method == "GET"
+        assert request.url.params["collapsedThreads"] == "true"
+        assert request.url.params["skipFetchThreads"] == "true"
+        return httpx.Response(
+            200,
+            json={
+                "order": ["post-id"],
+                "posts": {"post-id": {"id": "post-id", "root_id": "parent-id"}},
+            },
+        )
+
+    with pytest.raises(TimeToolkitError, match="root-only"):
+        make_client(handler).get_channel_roots_page("channel-id")
+
+
+def test_thread_tail_uses_bounded_upward_cursor(monkeypatch):
+    monkeypatch.setattr("time_toolkit.client.time.time", lambda: 100)
+
+    def handler(request):
+        assert request.method == "GET"
+        assert request.url.params["perPage"] == "51"
+        assert request.url.params["direction"] == "up"
+        assert request.url.params["fromPost"] == "root-id"
+        assert request.url.params["fromCreateAt"] == "160000"
+        return httpx.Response(200, json={"order": [], "posts": {}})
+
+    assert make_client(handler).get_thread_tail("root-id", replies=50) == []
+
+
 def test_member_channels_stop_when_server_ignores_pagination():
     rows = [{"id": f"synthetic-{index}"} for index in range(220)]
     requested_pages = []

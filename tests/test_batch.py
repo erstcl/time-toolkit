@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import threading
 from collections import Counter
 
 import pytest
@@ -285,6 +286,62 @@ def test_parallel_reaction_progress_and_second_run_are_noop(tmp_path):
         assert client.calls["add_reaction"] == 6
     finally:
         state.close()
+
+
+def test_slow_request_does_not_block_all_other_queued_posts(tmp_path, monkeypatch):
+    service, selected, client = planned(tmp_path)
+    try:
+        apply_membership(service, selected)
+        collect_posts(service, selected)
+        ids = [row[0] for row in selected.db.execute("SELECT id FROM posts ORDER BY rowid")]
+        last_fast = threading.Event()
+
+        def reaction(_client, row, **_kwargs):
+            if row["id"] == ids[0]:
+                assert last_fast.wait(2), "All other records were blocked behind one slow request"
+            elif row["id"] == ids[-1]:
+                last_fast.set()
+            return "added"
+
+        monkeypatch.setattr("time_toolkit.batch.react_one", reaction)
+        apply_reactions(service, selected, workers=2)
+        assert selected.summary()["posts"] == {"added": 6}
+    finally:
+        selected.close()
+
+
+def test_temporary_failure_stays_pending_and_uncertain_post_is_checked_on_resume(
+    tmp_path, monkeypatch
+):
+    service, selected, client = planned(tmp_path)
+    try:
+        apply_membership(service, selected)
+        collect_posts(service, selected)
+        identifier = selected.db.execute("SELECT id FROM posts ORDER BY rowid LIMIT 1").fetchone()[
+            0
+        ]
+        original = client.add_reaction
+
+        def uncertain(user, post_id, emoji, **kwargs):
+            original(user, post_id, emoji, **kwargs)
+            if post_id == identifier:
+                raise NetworkError("Synthetic lost acknowledgement")
+
+        client.add_reaction = uncertain
+        with pytest.raises(NetworkError):
+            apply_reactions(service, selected, workers=1)
+        assert (
+            selected.db.execute(
+                "SELECT status,attempts FROM posts WHERE id=?", (identifier,)
+            ).fetchone()[0]
+            == "pending"
+        )
+        client.add_reaction = original
+        apply_reactions(service, selected, workers=1)
+        assert selected.summary()["posts"] == {"added": 5, "already_present": 1}
+        assert len(client.reactions[identifier]) == 1
+    finally:
+        selected.close()
 
 
 def test_uncertain_previous_attempt_checks_existing_reaction_before_posting():

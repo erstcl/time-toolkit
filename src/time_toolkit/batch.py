@@ -12,7 +12,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +91,16 @@ class BatchState:
                     error TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX posts_status ON posts(status);
+                CREATE TABLE post_selection (
+                    post_id TEXT PRIMARY KEY, kind TEXT NOT NULL, root_id TEXT NOT NULL
+                );
+                CREATE TABLE thread_roots (
+                    id TEXT PRIMARY KEY, channel_id TEXT NOT NULL,
+                    reply_count INTEGER, replies_fetched INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE prior_receipts (
+                    id TEXT PRIMARY KEY, status TEXT NOT NULL, attempts INTEGER NOT NULL
+                );
             """)
             self.put("schema_version", 1)
         if self.get("schema_version") != 1:
@@ -130,6 +140,8 @@ class BatchState:
             "folders": self.get("folders", {}),
             "emoji": self.get("emoji"),
             "limit": self.get("limit"),
+            "thread_reply_limit": self.get("thread_reply_limit", 0),
+            "selection_mode": self.get("selection_mode", "channel_latest"),
             "channel_types": self.get("channel_types", ["O", "P", "D", "G"]),
             "estimated_posts": self.get("estimated_posts"),
             "posts": states,
@@ -430,6 +442,10 @@ def move_joined_channels(service: TimeService, state: BatchState):
 
 
 def collect_posts(service: TimeService, state: BatchState):
+    if state.get("selection_mode") == "roots_and_replies":
+        from time_toolkit.thread_batch import collect_roots_and_replies
+
+        return collect_roots_and_replies(service, state)
     limit = state.get("limit")
     pending = state.db.execute("SELECT id FROM channels WHERE joined=1 AND fetched=0").fetchall()
     for index, row in enumerate(pending, 1):
@@ -497,50 +513,65 @@ def apply_reactions(service: TimeService, state: BatchState, *, workers: int):
         raise UsageError("workers must be between 1 and 8")
     last_report = 0.0
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        while True:
+        futures = {}
+        reserved = set()
+        fatal = None
+
+        def fill_slots():
             rows = [
                 dict(row)
                 for row in state.db.execute(
                     "SELECT * FROM posts WHERE status='pending' ORDER BY rowid LIMIT ?",
                     (workers * 2,),
                 )
-            ]
-            if not rows:
-                break
+                if row["id"] not in reserved
+            ][: workers - len(futures)]
             state.db.executemany(
                 "UPDATE posts SET attempts=attempts+1 WHERE id=?", [(row["id"],) for row in rows]
             )
             state.db.commit()
-            futures = {
-                pool.submit(
+            for row in rows:
+                reserved.add(row["id"])
+                future = pool.submit(
                     react_one,
                     service.client,
                     row,
                     user_id=state.get("user_id"),
                     emoji=state.get("emoji"),
                     run_id=state.get("run_id"),
-                ): row["id"]
-                for row in rows
-            }
-            fatal = None
-            for future in as_completed(futures):
-                identifier = futures[future]
+                )
+                futures[future] = row["id"]
+
+        fill_slots()
+        while futures:
+            completed, _pending = wait(futures, return_when=FIRST_COMPLETED)
+            for future in completed:
+                identifier = futures.pop(future)
+                reserved.remove(identifier)
                 try:
                     status = future.result()
                     error = ""
                 except (AuthenticationError, NetworkError) as failure:
                     status, error, fatal = "pending", failure.message, failure
                 except TimeToolkitError as failure:
-                    status, error = "failed", failure.message
+                    if failure.status_code in {408, 425, 429, 500, 502, 503, 504}:
+                        status, error = "pending", failure.message
+                        fatal = NetworkError("Temporary Time response; progress preserved")
+                    else:
+                        status, error = "failed", failure.message
+                except Exception as failure:
+                    status, error, fatal = "pending", type(failure).__name__, failure
                 state.db.execute(
                     "UPDATE posts SET status=?,error=? WHERE id=?", (status, error, identifier)
                 )
                 state.db.commit()
-            if fatal:
-                raise fatal
+            if fatal is None:
+                fill_slots()
             if time.monotonic() - last_report >= 30:
                 print(json.dumps(state.summary(), ensure_ascii=False), flush=True)
                 last_report = time.monotonic()
+        if fatal is not None:
+            raise fatal
 
 
 def run_batch(state: BatchState, *, approve_run: str, confirm_plan: str, workers: int, rate: float):
@@ -565,6 +596,9 @@ def run_batch(state: BatchState, *, approve_run: str, confirm_plan: str, workers
             raise UsageError("Batch parameters changed after approval")
     if "channel_types" in manifest and state.get("channel_types") != manifest["channel_types"]:
         raise UsageError("Channel types changed after approval")
+    for key in ("selection_mode", "thread_reply_limit"):
+        if key in manifest and state.get(key) != manifest[key]:
+            raise UsageError("Thread selection changed after approval")
     if {key: value["name"] for key, value in state.get("folders").items()} != manifest["folders"]:
         raise UsageError("Folder names changed after approval")
     if state.db.execute(
@@ -572,7 +606,11 @@ def run_batch(state: BatchState, *, approve_run: str, confirm_plan: str, workers
         "WHERE channels.id IS NULL OR channels.joined!=1"
     ).fetchone()[0]:
         raise UsageError("Post progress refers to a channel outside the approved membership")
-    if state.db.execute(
+    if state.get("selection_mode") == "roots_and_replies":
+        from time_toolkit.thread_batch import validate_thread_selection
+
+        validate_thread_selection(state)
+    elif state.db.execute(
         "SELECT channel_id FROM posts GROUP BY channel_id HAVING COUNT(*)>?",
         (state.get("limit"),),
     ).fetchone():

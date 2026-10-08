@@ -380,6 +380,42 @@ class TimeClient:
     def get_thread(self, root_id: str) -> list[dict[str, Any]]:
         return self._ordered_posts(self.request("GET", f"/api/v4/posts/{root_id}/thread"))
 
+    def get_thread_tail(self, root_id: str, *, replies: int = 50) -> list[dict[str, Any]]:
+        if not 1 <= replies <= 199:
+            raise UsageError("Thread reply limit must be between 1 and 199")
+        return self._ordered_posts(
+            self.request(
+                "GET",
+                f"/api/v4/posts/{quote(root_id, safe='')}/thread",
+                params={
+                    "perPage": replies + 1,
+                    "direction": "up",
+                    "fromPost": root_id,
+                    "fromCreateAt": int(time.time() * 1000) + 60_000,
+                    "collapsedThreads": "true",
+                },
+            )
+        )
+
+    def get_channel_roots_page(self, channel_id: str, *, page: int = 0, per_page: int = 100):
+        if page < 0 or not 1 <= per_page <= 200:
+            raise UsageError("Invalid root-page pagination")
+        posts = self._ordered_posts(
+            self.request(
+                "GET",
+                f"/api/v4/channels/{quote(channel_id, safe='')}/posts",
+                params={
+                    "page": page,
+                    "per_page": per_page,
+                    "collapsedThreads": "true",
+                    "skipFetchThreads": "true",
+                },
+            )
+        )
+        if any(post.get("root_id") for post in posts):
+            raise TimeToolkitError("This server did not return a root-only channel page")
+        return posts
+
     def get_channel_posts_page(
         self,
         channel_id: str,
