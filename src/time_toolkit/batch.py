@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from time_toolkit.client import TimeClient
 from time_toolkit.errors import (
     AuthenticationError,
@@ -46,6 +48,15 @@ class RateGate:
 class LimitedClient(TimeClient):
     def __init__(self, source: TimeClient, gate: RateGate):
         super().__init__(source.base_url, source.auth)
+        self._http.close()
+        self._http = httpx.Client(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(self.timeout),
+            follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=4, max_keepalive_connections=4, keepalive_expiry=60
+            ),
+        )
         self.gate = gate
 
     def request(self, *args, **kwargs):
