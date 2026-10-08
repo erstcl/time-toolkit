@@ -79,6 +79,7 @@ class BatchState:
                     status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
                     error TEXT NOT NULL DEFAULT ''
                 );
+                CREATE INDEX posts_status ON posts(status);
             """)
             self.put("schema_version", 1)
         if self.get("schema_version") != 1:
@@ -98,6 +99,17 @@ class BatchState:
         states = dict(
             self.db.execute("SELECT status,COUNT(*) FROM posts GROUP BY status").fetchall()
         )
+        unfinished_channels = self.db.execute(
+            "SELECT COUNT(*) FROM channels WHERE fetched=0 OR (needs_join=1 AND moved=0)"
+        ).fetchone()[0]
+        channel_errors = self.db.execute(
+            "SELECT COUNT(*) FROM channels WHERE error!=''"
+        ).fetchone()[0]
+        complete = (
+            not unfinished_channels
+            and not channel_errors
+            and all(status in {"added", "already_present"} for status in states)
+        )
         return {
             "run_id": self.get("run_id"),
             "profile": self.get("profile"),
@@ -109,9 +121,9 @@ class BatchState:
             "limit": self.get("limit"),
             "estimated_posts": self.get("estimated_posts"),
             "posts": states,
-            "channel_errors": self.db.execute(
-                "SELECT COUNT(*) FROM channels WHERE error!=''"
-            ).fetchone()[0],
+            "channel_errors": channel_errors,
+            "unfinished_channels": unfinished_channels,
+            "complete": complete,
             "approval_digest": self.get("approval_digest"),
         }
 
@@ -507,6 +519,8 @@ def run_batch(state: BatchState, *, approve_run: str, confirm_plan: str, workers
         except BlockingIOError as error:
             raise UsageError("This batch is already running") from error
         with TimeService.open(state.get("profile"), write_mode="confirmed") as service:
+            state.db.execute("CREATE INDEX IF NOT EXISTS posts_status ON posts(status)")
+            state.db.commit()
             service._require_write_allowed()
             if service.profile.base_url != state.get("server") or service.me().id != state.get(
                 "user_id"
@@ -564,7 +578,7 @@ def main(argv: list[str] | None = None):
                 )
             )
         print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
-        return 0
+        return 1 if args.mode == "apply" and not result["complete"] else 0
     except TimeToolkitError as error:
         print(json.dumps({"error": error.message, "error_type": type(error).__name__}), flush=True)
         return int(error.exit_code)

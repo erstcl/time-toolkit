@@ -337,3 +337,18 @@ def test_post_progress_cannot_target_unapproved_channel(tmp_path):
         assert client.calls == Counter()
     finally:
         state.close()
+
+
+def test_summary_does_not_report_failed_reactions_as_complete(tmp_path):
+    service, state, client = planned(tmp_path)
+    try:
+        assert state.summary()["complete"] is False
+        apply_membership(service, state)
+        collect_posts(service, state)
+        apply_reactions(service, state, workers=1)
+        assert state.summary()["complete"] is True
+        state.db.execute("UPDATE posts SET status='failed' WHERE rowid=1")
+        state.db.commit()
+        assert state.summary()["complete"] is False
+    finally:
+        state.close()
