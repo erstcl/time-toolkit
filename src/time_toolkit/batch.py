@@ -328,7 +328,9 @@ def apply_membership(service: TimeService, state: BatchState):
     for team_id in state.get("folders"):
         for row in client.request("GET", f"/api/v4/users/{user_id}/teams/{team_id}/channels"):
             current.add(row["id"])
-    pending = state.db.execute("SELECT * FROM channels WHERE needs_join=1 AND joined=0").fetchall()
+    pending = state.db.execute(
+        "SELECT * FROM channels WHERE needs_join=1 AND (joined=0 OR moved=0) ORDER BY rowid"
+    ).fetchall()
     for index, row in enumerate(pending, 1):
         try:
             if row["id"] not in current:
@@ -348,12 +350,25 @@ def apply_membership(service: TimeService, state: BatchState):
             raise
         except TimeToolkitError as error:
             state.db.execute("UPDATE channels SET error=? WHERE id=?", (error.message, row["id"]))
+            state.db.commit()
+            continue
         state.db.commit()
+        try:
+            move_joined_channels(service, state)
+        except TimeToolkitError as error:
+            state.db.execute("UPDATE channels SET error=? WHERE id=?", (error.message, row["id"]))
+            state.db.commit()
+            raise
         if index % 25 == 0 or index == len(pending):
             print(
                 json.dumps({"phase": "joining", "processed": index, "total": len(pending)}),
                 flush=True,
             )
+
+
+def move_joined_channels(service: TimeService, state: BatchState):
+    """File each successful join before any subsequent membership operation."""
+    client, user_id = service.client, state.get("user_id")
     folders = state.get("folders")
     for team_id, destination in folders.items():
         identifiers = [
@@ -389,11 +404,16 @@ def apply_membership(service: TimeService, state: BatchState):
             payload = client.get_sidebar_categories(user_id, team_id)
         updated = move_payload(payload, destination["id"], identifiers, user_id, team_id)
         if updated != payload["categories"]:
+            revision = hashlib.sha256(json.dumps(updated, sort_keys=True).encode()).hexdigest()[:16]
             client.update_sidebar_categories(
-                user_id, team_id, updated, idempotency_key=f"{state.get('run_id')}-move-{team_id}"
+                user_id,
+                team_id,
+                updated,
+                idempotency_key=f"{state.get('run_id')}-move-{team_id}-{revision}",
             )
         state.db.executemany(
-            "UPDATE channels SET moved=1 WHERE id=?", [(identifier,) for identifier in identifiers]
+            "UPDATE channels SET moved=1,error='' WHERE id=?",
+            [(identifier,) for identifier in identifiers],
         )
         state.db.commit()
 

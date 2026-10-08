@@ -16,7 +16,7 @@ from time_toolkit.batch import (
     run_batch,
 )
 from time_toolkit.config import Profile
-from time_toolkit.errors import ConflictError, PermissionError, UsageError
+from time_toolkit.errors import ConflictError, NetworkError, PermissionError, UsageError
 from time_toolkit.service import TimeService
 
 USER, TEAM, OLD, NEW, DM, EMPTY, CATEGORY = (letter * 26 for letter in "utondex")
@@ -204,6 +204,58 @@ def test_only_new_memberships_move_and_resume_does_not_duplicate_changes(tmp_pat
         assert client.calls == Counter(join=1, create_category=1, update_categories=1)
         apply_membership(service, state)
         assert client.calls == Counter(join=1, create_category=1, update_categories=1)
+    finally:
+        state.close()
+
+
+def test_each_join_is_filed_before_the_next_join_and_move_failure_stops_batch(tmp_path):
+    client = Client()
+    second = "z" * 26
+    client.public.append(channel(second))
+    service, state, _client = planned(tmp_path, client)
+    events = []
+    move_keys = []
+    fail_move = [True]
+    original_move = client.update_sidebar_categories
+
+    def join(user, identifier, **_kwargs):
+        assert user == USER
+        events.append(("join", identifier))
+        client.members.append(client.get_channel(identifier))
+
+    def move(user, team, rows, **kwargs):
+        move_keys.append(kwargs["idempotency_key"])
+        if fail_move[0]:
+            raise NetworkError("Synthetic folder failure")
+        original_move(user, team, rows)
+        events.append(("move", rows[-1]["channel_ids"][-1]))
+
+    client.join_channel = join
+    client.update_sidebar_categories = move
+    try:
+        with pytest.raises(NetworkError):
+            apply_membership(service, state)
+        assert events == [("join", NEW)]
+        assert (
+            state.db.execute("SELECT joined,moved FROM channels WHERE id=?", (NEW,)).fetchone()[
+                "moved"
+            ]
+            == 0
+        )
+        assert (
+            state.db.execute("SELECT joined FROM channels WHERE id=?", (second,)).fetchone()[0] == 0
+        )
+        fail_move[0] = False
+        apply_membership(service, state)
+        assert events == [("join", NEW), ("move", NEW), ("join", second), ("move", second)]
+        assert move_keys[0] == move_keys[1]
+        assert move_keys[1] != move_keys[2]
+        assert (
+            state.db.execute(
+                "SELECT COUNT(*) FROM channels WHERE needs_join=1 AND moved=1"
+            ).fetchone()[0]
+            == 2
+        )
     finally:
         state.close()
 
