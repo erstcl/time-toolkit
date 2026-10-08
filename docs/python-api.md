@@ -72,6 +72,7 @@ doctor() -> dict[str, Any]
 search_users(term, *, limit=20) -> list[User]
 get_user(username) -> User
 list_channels(*, pattern="", channel_type="", limit=100, max_pages=10) -> list[Channel]
+discover_channels(*, pattern="", page=0, per_page=100, include_joined=False) -> dict[str, Any]
 list_dms(*, with_user="", limit=100) -> list[Channel]
 resolve_channel(value) -> Channel
 sidebar_categories() -> list[SidebarCategory]

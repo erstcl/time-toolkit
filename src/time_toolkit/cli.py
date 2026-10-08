@@ -248,6 +248,18 @@ def cmd_teams(args: argparse.Namespace) -> int:
     return _with_service(args, lambda service: service.teams())
 
 
+def cmd_discover_channels(args: argparse.Namespace) -> int:
+    return _with_service(
+        args,
+        lambda service: service.discover_channels(
+            pattern=args.pattern,
+            page=args.page,
+            per_page=args.per_page,
+            include_joined=args.include_joined,
+        ),
+    )
+
+
 def cmd_channels(args: argparse.Namespace) -> int:
     return _with_service(
         args,
@@ -834,6 +846,15 @@ def build_parser() -> argparse.ArgumentParser:
     channels.add_argument("--limit", type=int, default=100)
     channels.add_argument("--max-pages", type=int, default=10)
     channels.set_defaults(func=cmd_channels)
+
+    discover = commands.add_parser(
+        "discover-channels", help="find public channels outside membership"
+    )
+    discover.add_argument("--pattern", default="")
+    discover.add_argument("--page", type=int, default=0)
+    discover.add_argument("--per-page", type=int, default=100)
+    discover.add_argument("--include-joined", action="store_true")
+    discover.set_defaults(func=cmd_discover_channels)
 
     commands.add_parser("categories", help="list sidebar categories").set_defaults(
         func=cmd_categories

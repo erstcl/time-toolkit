@@ -17,6 +17,7 @@ read operations.
 
 ## Capabilities
 
+- discover public channels outside your membership with name/description filtering and explicit pagination;
 - inspect teams, channels, direct messages, posts, threads, unread messages,
   mentions, pins, flags, read receipts, reactions, users, and file metadata;
 - download one selected attachment safely through MCP into a fixed local folder;

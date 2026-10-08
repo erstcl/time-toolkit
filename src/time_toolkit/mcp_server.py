@@ -166,6 +166,26 @@ def time_channels(
 
 @mcp.tool(annotations=READ_ONLY)
 @_tool_errors
+def time_discover_channels(
+    profile: str,
+    pattern: str = "",
+    page: int = 0,
+    per_page: int = 100,
+    include_joined: bool = False,
+) -> dict[str, Any]:
+    """Find public channels outside membership; follow next_page even if channels is empty."""
+    with _service(profile) as service:
+        result = service.discover_channels(
+            pattern=pattern,
+            page=page,
+            per_page=_bounded_limit(per_page),
+            include_joined=include_joined,
+        )
+        return _envelope(profile, service.profile.base_url, result)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_tool_errors
 def time_unread(
     profile: str,
     channel: str = "",

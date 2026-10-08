@@ -184,6 +184,55 @@ class TimeService:
             output.append(channel)
         return output
 
+    def discover_channels(
+        self,
+        *,
+        pattern: str = "",
+        page: int = 0,
+        per_page: int = 100,
+        include_joined: bool = False,
+    ) -> dict[str, Any]:
+        """Read one public-directory page, filtering channels already joined by default."""
+        if page < 0 or not 1 <= per_page <= 200:
+            raise UsageError("page must be non-negative and per_page must be between 1 and 200")
+        team_id = self.team_id()
+        raw_page = self.client.get_public_channels_page(team_id, page=page, per_page=per_page)
+        joined_ids: set[str] = set()
+        if not include_joined:
+            for batch in self.client.iter_my_channels(self.me().id, team_id, max_pages=0):
+                joined_ids.update(str(row["id"]) for row in batch)
+        needle = pattern.strip().casefold()
+        channels = []
+        seen: set[str] = set()
+        for row in raw_page:
+            channel = Channel.from_api(row)
+            if (
+                not channel.id
+                or channel.id in seen
+                or channel.id in joined_ids
+                or channel.type != "O"
+                or row.get("delete_at", 0)
+                or channel.team_id != team_id
+            ):
+                continue
+            text = " ".join(
+                str(row.get(field, "")) for field in ("name", "display_name", "purpose", "header")
+            ).casefold()
+            if needle and needle not in text:
+                continue
+            seen.add(channel.id)
+            channels.append(channel)
+        # Continuation depends on the raw page, even if every result was filtered out.
+        return {
+            "channels": channels,
+            "team_id": team_id,
+            "page": page,
+            "per_page": per_page,
+            "scanned_count": len(raw_page),
+            "next_page": page + 1 if len(raw_page) >= per_page else None,
+            "include_joined": include_joined,
+        }
+
     def list_dms(self, *, with_user: str = "", limit: int = 100) -> list[Channel]:
         channels = self.list_channels(limit=max(limit * 4, 200), max_pages=20)
         output = [channel for channel in channels if channel.type in {"D", "G"}]

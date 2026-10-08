@@ -66,6 +66,7 @@ Time-инструментов.
 | `time_profiles` | — | — |
 | `time_me` | `profile` | — |
 | `time_channels` | `profile` | `pattern`, `channel_type`, `limit=100` |
+| `time_discover_channels` | `profile` | `pattern`, `page=0`, `per_page=100`, `include_joined=false` |
 | `time_unread` | `profile` | `channel`, `include_posts=false`, `mentions_only=false`, `limit=50` |
 | `time_posts` | `profile`, `channel` | `since`, `until`, `authors`, `contains`, `limit=100` |
 | `time_search` | `profile`, `query` | `channels`, `authors`, `since`, `until`, `limit=100` |
@@ -93,6 +94,26 @@ Time-инструментов.
 заменяет существующий файл, поэтому он помечен как локальная запись, а не как
 read-only операция. Сначала при необходимости вызовите `time_file_info`, чтобы
 выбрать подходящее имя, например `production-ml/hw1-starter.zip`.
+
+## Поиск новых каналов
+
+`time_discover_channels` читает публичный каталог выбранной команды, включая
+каналы, в которых пользователь не состоит. «Новые» здесь означает каналы вне
+членства, а не недавно созданные. `pattern` ищет подстроку без учёта регистра
+в имени, отображаемом имени, описании и заголовке. `include_joined=true`
+включает также каналы аккаунта. Архивные, приватные и личные каналы исключаются.
+
+Результат содержит `channels`, `team_id`, `page`, `per_page`, `scanned_count`
+и `next_page`. Размер страницы относится к каталогу до фильтрации. Продолжайте
+с `page=next_page`, пока `next_page` не станет `null`, даже если `channels=[]`.
+Полная страница может потребовать дополнительного пустого запроса в конце.
+На каждую страницу по умолчанию заново проверяется членство; `per_page` от 1 до 200.
+Присоединение, чтение сообщений и реакции этим инструментом не выполняются.
+Отказ сервера в доступе к каталогу возвращается как ошибка, а не как пустой список.
+
+```text
+time_discover_channels(profile="university", pattern="nlp", page=0)
+```
 
 ## Двухшаговая запись
 

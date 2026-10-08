@@ -218,6 +218,20 @@ class TimeClient:
 
     # Channels
 
+    def get_public_channels_page(
+        self, team_id: str, *, page: int = 0, per_page: int = 100
+    ) -> list[dict[str, Any]]:
+        if page < 0 or not 1 <= per_page <= 200:
+            raise UsageError("page must be non-negative and per_page must be between 1 and 200")
+        value = self.request(
+            "GET",
+            f"/api/v4/teams/{team_id}/channels",
+            params={"page": page, "per_page": per_page},
+        )
+        if not isinstance(value, list) or any(not isinstance(row, dict) for row in value):
+            raise TimeToolkitError("Time returned an invalid public-channel page")
+        return value
+
     def iter_my_channels(
         self,
         user_id: str,
