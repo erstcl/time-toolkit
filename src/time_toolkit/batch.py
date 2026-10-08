@@ -119,6 +119,7 @@ class BatchState:
             "folders": self.get("folders", {}),
             "emoji": self.get("emoji"),
             "limit": self.get("limit"),
+            "channel_types": self.get("channel_types", ["O", "P", "D", "G"]),
             "estimated_posts": self.get("estimated_posts"),
             "posts": states,
             "channel_errors": channel_errors,
@@ -131,7 +132,27 @@ class BatchState:
         self.db.close()
 
 
-def create_plan(service: TimeService, state: BatchState, *, emoji: str, folder: str, limit: int):
+def create_plan(
+    service: TimeService,
+    state: BatchState,
+    *,
+    emoji: str,
+    folder: str,
+    limit: int,
+    channel_types: list[str] | None = None,
+    channel_ids: list[str] | None = None,
+):
+    requested_ids = set(channel_ids) if channel_ids is not None else None
+    if requested_ids is not None and (
+        not requested_ids
+        or any(not re.fullmatch(r"[a-z0-9]{26}", value) for value in requested_ids)
+    ):
+        raise UsageError("Choose at least one exact channel ID")
+    selected_types = sorted(
+        set(channel_types if channel_types is not None else ["O", "P", "D", "G"])
+    )
+    if not selected_types or not set(selected_types) <= {"O", "P", "D", "G"}:
+        raise UsageError("Choose at least one channel type from O, P, D, G")
     if not 1 <= limit <= 200 or not folder.strip() or len(folder.strip()) > 54:
         raise UsageError(
             "Choose a non-empty folder name up to 54 characters and limit from 1 to 200"
@@ -179,9 +200,12 @@ def create_plan(service: TimeService, state: BatchState, *, emoji: str, folder: 
             index += 1
         folders[team_id] = {"name": name, "id": ""}
     estimated_posts = 0
+    planned_ids = set()
     for identifier, row in raw_channels.items():
+        if requested_ids is not None and identifier not in requested_ids:
+            continue
         count = row.get("total_msg_count")
-        if not isinstance(count, int) or count <= 0 or row.get("type") not in {"O", "P", "D", "G"}:
+        if not isinstance(count, int) or count <= 0 or row.get("type") not in selected_types:
             continue
         was_member = identifier in member_ids
         if not was_member and (row.get("type") != "O" or row.get("delete_at")):
@@ -189,6 +213,7 @@ def create_plan(service: TimeService, state: BatchState, *, emoji: str, folder: 
         if not re.fullmatch(r"[a-z0-9]{26}", identifier):
             raise UsageError("Invalid channel ID in the Time directory")
         estimated_posts += min(count, limit)
+        planned_ids.add(identifier)
         state.db.execute(
             "INSERT INTO channels (id,name,team_id,type,was_member,needs_join,joined) "
             "VALUES(?,?,?,?,?,?,?)",
@@ -202,6 +227,10 @@ def create_plan(service: TimeService, state: BatchState, *, emoji: str, folder: 
                 was_member,
             ),
         )
+    if requested_ids is not None and requested_ids != planned_ids:
+        raise UsageError(
+            "Some selected channels are missing or do not match the non-empty type scope"
+        )
     state.db.commit()
     for key, value in {
         "run_id": uuid.uuid4().hex,
@@ -210,6 +239,7 @@ def create_plan(service: TimeService, state: BatchState, *, emoji: str, folder: 
         "user_id": user_id,
         "emoji": emoji,
         "limit": limit,
+        "channel_types": selected_types,
         "folders": folders,
         "sidebar_before": backups,
         "estimated_posts": estimated_posts,
@@ -222,6 +252,7 @@ def create_plan(service: TimeService, state: BatchState, *, emoji: str, folder: 
         "user_id": user_id,
         "emoji": emoji,
         "limit": limit,
+        "channel_types": selected_types,
         "folders": {key: value["name"] for key, value in folders.items()},
         "channels": [
             tuple(row)
@@ -241,7 +272,9 @@ def create_plan(service: TimeService, state: BatchState, *, emoji: str, folder: 
         "",
         f"Реакция: :{emoji}:. Последних сообщений на канал: до {limit}.",
         "",
-        f"Оценка общего числа сообщений по счётчикам: до {estimated_posts}.",
+        f"Типы каналов: {', '.join(selected_types)}.",
+        "",
+        f"Оценка общего числа сообщений по текущим счётчикам: около {estimated_posts}.",
         "",
         "Вступление и перенос в новую папку выполняются только для каналов вне исходного членства.",
         "Существующие каналы и беседы не перемещаются. Префиксы BSc/MSc не исключаются.",
@@ -370,6 +403,10 @@ def collect_posts(service: TimeService, state: BatchState):
     pending = state.db.execute("SELECT id FROM channels WHERE joined=1 AND fetched=0").fetchall()
     for index, row in enumerate(pending, 1):
         try:
+            raw_channel = service.client.get_channel(row["id"])
+            allowed_types = state.get("channel_types", ["O", "P", "D", "G"])
+            if raw_channel.get("type") not in allowed_types:
+                raise UsageError("Channel type no longer matches the approved scope")
             posts = service.client.get_channel_posts_page(row["id"], per_page=limit)
             posts = sorted(posts, key=lambda post: post.get("create_at", 0), reverse=True)[:limit]
             for post in posts:
@@ -495,6 +532,8 @@ def run_batch(state: BatchState, *, approve_run: str, confirm_plan: str, workers
     for key in ("run_id", "profile", "server", "user_id", "emoji", "limit"):
         if state.get(key) != manifest[key]:
             raise UsageError("Batch parameters changed after approval")
+    if "channel_types" in manifest and state.get("channel_types") != manifest["channel_types"]:
+        raise UsageError("Channel types changed after approval")
     if {key: value["name"] for key, value in state.get("folders").items()} != manifest["folders"]:
         raise UsageError("Folder names changed after approval")
     if state.db.execute(
@@ -549,6 +588,10 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--folder")
     parser.add_argument("--emoji")
     parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument("--channel-type", choices=("O", "P", "D", "G"), action="append")
+    parser.add_argument(
+        "--channel", action="append", help="exact channel ID; repeat for a bounded pilot"
+    )
     parser.add_argument("--approve-run", default="")
     parser.add_argument("--confirm-plan", default="")
     parser.add_argument("--workers", type=int, default=4)
@@ -562,7 +605,13 @@ def main(argv: list[str] | None = None):
             state = BatchState(args.state, create=True)
             with TimeService.open(args.profile) as service:
                 result = create_plan(
-                    service, state, emoji=args.emoji, folder=args.folder, limit=args.limit
+                    service,
+                    state,
+                    emoji=args.emoji,
+                    folder=args.folder,
+                    limit=args.limit,
+                    channel_types=args.channel_type,
+                    channel_ids=args.channel,
                 )
         else:
             state = BatchState(args.state)

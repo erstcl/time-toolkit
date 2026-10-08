@@ -74,7 +74,7 @@ class Client:
         return {"categories": copy.deepcopy(self.categories), "order": ["source"]}
 
     def get_channel(self, identifier):
-        return next(row for row in self.public if row["id"] == identifier)
+        return next(row for row in self.members + self.public if row["id"] == identifier)
 
     def join_channel(self, user, identifier, **_kwargs):
         assert user == USER and identifier == NEW
@@ -137,6 +137,59 @@ def test_plan_includes_bsc_and_member_dms_without_writes_or_message_reads(tmp_pa
         assert client.calls == Counter()
         assert {row[0] for row in state.db.execute("SELECT id FROM channels")} == {OLD, NEW, DM}
         assert (tmp_path / "batch.plan.md").is_file()
+    finally:
+        state.close()
+
+
+def test_public_only_plan_excludes_private_direct_and_group_conversations(tmp_path):
+    client = Client()
+    client.members.extend([channel("p" * 26, "P"), channel("g" * 26, "G")])
+    service = TimeService(Profile("test", "https://time.example.test", team_id=TEAM), client)
+    state = BatchState(tmp_path / "public.sqlite", create=True)
+    try:
+        create_plan(service, state, emoji=EMOJI, folder="New", limit=75, channel_types=["O"])
+        rows = state.db.execute("SELECT id,type FROM channels").fetchall()
+        assert {row[0] for row in rows} == {OLD, NEW}
+        assert {row[1] for row in rows} == {"O"}
+        assert state.get("approval_manifest")["channel_types"] == ["O"]
+        assert client.calls == Counter()
+    finally:
+        state.close()
+
+
+def test_bounded_pilot_selects_only_explicit_channel_ids(tmp_path):
+    client = Client()
+    service = TimeService(Profile("test", "https://time.example.test", team_id=TEAM), client)
+    state = BatchState(tmp_path / "pilot.sqlite", create=True)
+    try:
+        create_plan(
+            service,
+            state,
+            emoji=EMOJI,
+            folder="New",
+            limit=75,
+            channel_types=["O"],
+            channel_ids=[NEW],
+        )
+        assert state.summary()["channels"] == 1
+        assert state.summary()["new_channels"] == 1
+        assert state.db.execute("SELECT id FROM channels").fetchone()[0] == NEW
+        assert client.calls == Counter()
+    finally:
+        state.close()
+
+
+def test_channel_that_becomes_private_is_not_read_for_public_only_run(tmp_path):
+    service, state, client = planned(tmp_path)
+    try:
+        state.put("channel_types", ["O"])
+        client.members[0]["type"] = "P"
+        collect_posts(service, state)
+        assert (
+            state.db.execute("SELECT COUNT(*) FROM posts WHERE channel_id=?", (OLD,)).fetchone()[0]
+            == 0
+        )
+        assert state.db.execute("SELECT error FROM channels WHERE id=?", (OLD,)).fetchone()[0]
     finally:
         state.close()
 
