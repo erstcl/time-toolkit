@@ -39,6 +39,7 @@ dev = [
 
 [project.scripts]
 timetk = "time_toolkit.cli:main"
+timetk-batch = "time_toolkit.batch:main"
 
 [project.urls]
 Homepage = "https://github.com/erstcl/time-toolkit"

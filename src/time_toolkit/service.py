@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import re
 import tempfile
@@ -618,6 +619,78 @@ class TimeService:
         }
 
     # Writes
+
+    def join_channel(self, channel: str) -> dict[str, Any]:
+        """Join only the current account to an active public channel in the selected team."""
+        self._require_write_allowed()
+        selected = self.resolve_channel(channel)
+        raw = self.client.get_channel(selected.id)
+        if raw.get("type") != "O" or raw.get("delete_at") or raw.get("team_id") != self.team_id():
+            raise UsageError("Only active public channels in the selected team can be joined")
+        user_id = self.me().id
+        joined = {
+            str(row.get("id"))
+            for batch in self.client.iter_my_channels(user_id, self.team_id(), max_pages=0)
+            for row in batch
+        }
+        if selected.id in joined:
+            return {"channel_id": selected.id, "joined": True, "already_joined": True}
+        self.client.join_channel(user_id, selected.id, idempotency_key=uuid.uuid4().hex)
+        return {"channel_id": selected.id, "joined": True, "already_joined": False}
+
+    def create_category(self, name: str) -> SidebarCategory:
+        self._require_write_allowed()
+        name = name.strip()
+        if not name or len(name) > 64:
+            raise UsageError("Category name must contain between 1 and 64 characters")
+        existing = [item for item in self.sidebar_categories() if item.display_name == name]
+        if existing:
+            raise ConflictError("A sidebar category with this name already exists")
+        raw = self.client.create_sidebar_category(
+            self.me().id, self.team_id(), name, idempotency_key=uuid.uuid4().hex
+        )
+        return SidebarCategory.from_api(raw)
+
+    def move_channels_to_category(self, channels: list[str], category: str) -> dict[str, Any]:
+        """Move explicitly selected member channels, preserving all other folder settings."""
+        self._require_write_allowed()
+        identifiers = list(dict.fromkeys(channels))
+        if not identifiers or any(not _ID_RE.fullmatch(value) for value in identifiers):
+            raise UsageError("Pass at least one exact channel ID")
+        target = self.resolve_sidebar_category(category)
+        if target.type != "custom":
+            raise UsageError("The destination must be a custom sidebar category")
+        user_id, team_id = self.me().id, self.team_id()
+        member_ids = {
+            str(row.get("id"))
+            for batch in self.client.iter_my_channels(user_id, team_id, max_pages=0)
+            for row in batch
+        }
+        if not set(identifiers) <= member_ids:
+            raise UsageError("Channels must already belong to the current account")
+        payload = self.client.get_sidebar_categories(user_id, team_id)
+        rows = payload.get("categories")
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ConflictError("Invalid sidebar category snapshot")
+        updated = copy.deepcopy(rows)
+        destination = next((row for row in updated if row.get("id") == target.id), None)
+        if destination is None or destination.get("type") != "custom":
+            raise ConflictError("The destination changed; read the sidebar again")
+        if any(row.get("user_id") != user_id or row.get("team_id") != team_id for row in updated):
+            raise ConflictError("Sidebar category ownership does not match the selected profile")
+        moving = set(identifiers)
+        for row in updated:
+            values = row.get("channel_ids", [])
+            if not isinstance(values, list):
+                raise ConflictError("Invalid sidebar channel list")
+            row["channel_ids"] = [value for value in values if value not in moving]
+        previous = next(row for row in rows if row.get("id") == target.id)["channel_ids"]
+        destination["channel_ids"] = list(dict.fromkeys(previous + identifiers))
+        if updated != rows:
+            self.client.update_sidebar_categories(
+                user_id, team_id, updated, idempotency_key=uuid.uuid4().hex
+            )
+        return {"category_id": target.id, "channel_ids": identifiers, "changed": updated != rows}
 
     def _require_write_allowed(self) -> None:
         if self.profile.write_policy == "readonly":

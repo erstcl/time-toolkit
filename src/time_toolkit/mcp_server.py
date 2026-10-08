@@ -35,6 +35,9 @@ WriteAction = Literal[
     "mark-unread",
     "mark-read",
     "upload-files",
+    "join-channel",
+    "create-category",
+    "move-channel",
 ]
 
 INSTRUCTIONS = """Time Messenger access through explicitly named profiles. Reading tools do not
@@ -373,6 +376,7 @@ class PreparedWrite:
     file_paths: tuple[str, ...]
     created_at: int
     expires_at: float
+    category: str = ""
 
     @property
     def confirmation(self) -> str:
@@ -389,6 +393,7 @@ class PreparedWrite:
             "emoji": self.emoji,
             "file_ids": list(self.file_ids),
             "file_paths": list(self.file_paths),
+            "category": self.category,
             "created_at": self.created_at,
             "expires_in_seconds": max(0, int(self.expires_at - time.monotonic())),
             "confirmation": self.confirmation,
@@ -412,10 +417,15 @@ class PreparedWriteStore:
         emoji: str = "",
         file_ids: list[str] | None = None,
         file_paths: list[str] | None = None,
+        category: str = "",
     ) -> PreparedWrite:
         files = tuple(file_ids or ())
         paths = tuple(file_paths or ())
         self._validate(action, target, message, emoji, files, paths)
+        if action == "move-channel" and not category.strip():
+            raise UsageError("move-channel needs an explicit category ID or exact name")
+        if action != "move-channel" and category:
+            raise UsageError("category is only valid for move-channel")
         now = time.monotonic()
         item = PreparedWrite(
             id=secrets.token_urlsafe(12),
@@ -429,6 +439,7 @@ class PreparedWriteStore:
             file_paths=paths,
             created_at=int(time.time()),
             expires_at=now + self.ttl_seconds,
+            category=category,
         )
         with self._lock:
             self._purge(now)
@@ -488,6 +499,7 @@ def time_prepare_write(
     emoji: str = "",
     file_ids: list[str] | None = None,
     file_paths: list[str] | None = None,
+    category: str = "",
 ) -> dict[str, Any]:
     """Prepare an exact write preview. This does not change Time; show it to the user."""
     config = ConfigStore()
@@ -505,12 +517,19 @@ def time_prepare_write(
         emoji=emoji,
         file_ids=file_ids,
         file_paths=file_paths,
+        category=category,
     )
     return _envelope(selected.name, selected.base_url, item.preview(), prepared=True)
 
 
 def _execute_write(service: TimeService, item: PreparedWrite) -> Any:
     key = f"mcp-{item.id}"
+    if item.action == "join-channel":
+        return service.join_channel(item.target)
+    if item.action == "create-category":
+        return service.create_category(item.target)
+    if item.action == "move-channel":
+        return service.move_channels_to_category([item.target], item.category)
     if item.action == "post":
         return service.create_post(
             item.target,

@@ -142,6 +142,19 @@ post, reply, edit, delete, pin, unpin, react, unreact,
 flag, unflag, follow, unfollow, mark-unread, mark-read, upload-files
 ```
 
+Для членства и папок дополнительно доступны `join-channel`, `create-category`
+и `move-channel`, через тот же prepare/confirmation/commit протокол:
+
+```text
+time_prepare_write(profile="university", action="join-channel", target="CHANNEL_ID")
+time_prepare_write(profile="university", action="create-category", target="New channels")
+time_prepare_write(profile="university", action="move-channel", target="CHANNEL_ID", category="CATEGORY_ID")
+```
+
+`category` включается в полный preview и разрешён только для `move-channel`.
+Каждое подтверждение привязано к одному подготовленному действию и одноразово.
+Ни одна из этих операций не отправляет сообщения и не проставляет реакции.
+
 Проверки payload:
 
 - `post` и `reply` требуют текст или хотя бы один `file_id`;

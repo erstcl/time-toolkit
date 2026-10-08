@@ -18,6 +18,8 @@ read operations.
 ## Capabilities
 
 - discover public channels outside your membership with name/description filtering and explicit pagination;
+- join public channels and manage your sidebar folders through confirmed CLI/MCP writes;
+- run explicitly approved, resumable local reaction batches without sending message bodies to an agent; see [batch operations](docs/batch.md);
 - inspect teams, channels, direct messages, posts, threads, unread messages,
   mentions, pins, flags, read receipts, reactions, users, and file metadata;
 - download one selected attachment safely through MCP into a fixed local folder;

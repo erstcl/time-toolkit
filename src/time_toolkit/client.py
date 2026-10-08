@@ -275,6 +275,56 @@ class TimeClient:
         )
         return value if isinstance(value, dict) else {"categories": [], "order": []}
 
+    def join_channel(
+        self, user_id: str, channel_id: str, *, idempotency_key: str
+    ) -> dict[str, Any]:
+        value = self.request(
+            "POST",
+            f"/api/v4/channels/{quote(channel_id, safe='')}/members",
+            json_body={"user_id": user_id},
+            idempotency_key=idempotency_key,
+        )
+        if not isinstance(value, dict):
+            raise TimeToolkitError("Time returned an invalid channel membership")
+        return value
+
+    def create_sidebar_category(
+        self, user_id: str, team_id: str, name: str, *, idempotency_key: str
+    ) -> dict[str, Any]:
+        value = self.request(
+            "POST",
+            f"/api/v4/users/{user_id}/teams/{team_id}/channels/categories",
+            json_body={
+                "user_id": user_id,
+                "team_id": team_id,
+                "type": "custom",
+                "display_name": name,
+                "sorting": "manual",
+                "muted": False,
+                "collapsed": False,
+                "channel_ids": [],
+            },
+            idempotency_key=idempotency_key,
+        )
+        if not isinstance(value, dict) or not value.get("id"):
+            raise TimeToolkitError("Time returned an invalid sidebar category")
+        return value
+
+    def update_sidebar_categories(
+        self,
+        user_id: str,
+        team_id: str,
+        categories: list[dict[str, Any]],
+        *,
+        idempotency_key: str,
+    ) -> Any:
+        return self.request(
+            "PUT",
+            f"/api/v4/users/{user_id}/teams/{team_id}/channels/categories",
+            json_body=categories,
+            idempotency_key=idempotency_key,
+        )
+
     def get_channels_by_ids(self, channel_ids: list[str]) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
         unique = list(dict.fromkeys(channel_id for channel_id in channel_ids if channel_id))

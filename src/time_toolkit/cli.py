@@ -466,6 +466,25 @@ def _write_preview(
     }
 
 
+def cmd_channel_management(args: argparse.Namespace) -> int:
+    profile_name = _require_profile(args, explicit=True)
+    with TimeService.open(profile_name, write_mode=_write_mode(args)) as service:
+        category = getattr(args, "category", "")
+        preview = _write_preview(
+            service, operation=args.command, target=args.target, extra={"category": category}
+        )
+        if not _confirm(args, preview):
+            return 0
+        if args.command == "join-channel":
+            result = service.join_channel(args.target)
+        elif args.command == "create-category":
+            result = service.create_category(args.target)
+        else:
+            result = service.move_channels_to_category([args.target], category)
+        _emit_for(service, result, args)
+    return 0
+
+
 def cmd_post(args: argparse.Namespace) -> int:
     profile_name = _require_profile(args, explicit=True)
     message = _read_message(args.message)
@@ -1000,6 +1019,14 @@ def build_parser() -> argparse.ArgumentParser:
         action.set_defaults(func=cmd_react)
 
     simple_writes = ("flag", "unflag", "follow", "unfollow", "mark-unread", "mark-read")
+    for name in ("join-channel", "create-category", "move-channel"):
+        action = commands.add_parser(name, help=name.replace("-", " "))
+        action.add_argument("target", help="public channel ID or category name for create-category")
+        if name == "move-channel":
+            action.add_argument("category", help="custom category ID or exact name")
+        _add_write_flags(action)
+        action.set_defaults(func=cmd_channel_management)
+
     for name in simple_writes:
         action = commands.add_parser(name, help=name.replace("-", " "))
         action.add_argument("target")

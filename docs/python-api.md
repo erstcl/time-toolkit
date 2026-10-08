@@ -96,6 +96,26 @@ file_info(file_id) -> dict
 download_file(file_id, destination, *, overwrite=False) -> Path
 ```
 
+## Управление членством и папками
+
+Методы записи используют ту же политику профиля, что сообщения и реакции:
+
+```python
+with TimeService.open("university", write_mode="confirmed") as time:
+    time.join_channel("CHANNEL_ID")
+    category = time.create_category("New channels")
+    time.move_channels_to_category(["CHANNEL_ID"], category.id)
+```
+
+`join_channel` добавляет только текущий аккаунт в активный публичный канал
+выбранной команды; для существующего членства возвращает `already_joined=true`.
+`create_category` отклоняет неоднозначное повторное имя вместо создания дубля.
+`move_channels_to_category` принимает точные ID каналов аккаунта и custom-папку.
+Порядок и настройки остальных папок сохраняются, перемещаемые ID удаляются
+из прежних папок и добавляются в конец выбранной. Повторный перенос не пишет,
+если состояние уже совпадает. Метод не выполняет вступлений автоматически.
+`readonly` запрещает все три действия, даже с `write_mode="confirmed"`.
+
 `since_ms` и `until_ms` — Unix timestamp в миллисекундах. Для разбора пользовательских
 строк доступен `time_toolkit.dates.parse_time_bound`, но это вспомогательный API;
 интеграции могут использовать стандартный `datetime`.
