@@ -241,6 +241,7 @@ class TimeClient:
         max_pages: int = 0,
     ) -> Iterator[list[dict[str, Any]]]:
         page = 0
+        seen_pages: set[frozenset[str]] = set()
         size = min(max(per_page, 1), 200)
         path = f"/api/v4/users/{user_id}/teams/{team_id}/channels"
         while True:
@@ -248,6 +249,11 @@ class TimeClient:
             batch = value if isinstance(value, list) else []
             if not batch:
                 return
+            # Some Time servers return the full membership list and ignore page.
+            signature = frozenset(str(row.get("id", "")) for row in batch)
+            if signature in seen_pages:
+                return
+            seen_pages.add(signature)
             yield batch
             if len(batch) < size:
                 return

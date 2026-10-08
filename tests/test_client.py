@@ -21,6 +21,32 @@ def make_client(handler, *, auth: AuthContext | None = None, attempts: int = 3) 
     )
 
 
+def test_member_channels_stop_when_server_ignores_pagination():
+    rows = [{"id": f"synthetic-{index}"} for index in range(220)]
+    requested_pages = []
+
+    def handler(request):
+        assert request.method == "GET"
+        requested_pages.append(int(request.url.params["page"]))
+        return httpx.Response(200, json=rows)
+
+    client = make_client(handler)
+    assert list(client.iter_my_channels("user-id", "team-id")) == [rows]
+    assert requested_pages == [0, 1]
+
+
+def test_member_channels_continue_for_distinct_pages():
+    first = [{"id": f"synthetic-{index}"} for index in range(100)]
+    second = [{"id": "last-channel"}]
+
+    def handler(request):
+        page = int(request.url.params["page"])
+        return httpx.Response(200, json=first if page == 0 else second)
+
+    client = make_client(handler)
+    assert list(client.iter_my_channels("user-id", "team-id")) == [first, second]
+
+
 def test_since_is_not_combined_with_pagination():
     seen: dict[str, str] = {}
 
